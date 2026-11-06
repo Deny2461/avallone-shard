@@ -1,0 +1,12 @@
+{
+  "version": "placeholder-1",
+  "_note": "PLACEHOLDER - the real list is kept private. The real file holds a narrow list of unambiguous slurs and extremist slogans, matched as whole words after normalising look-alike letters. These invented words exist only so the code and its tests run. allow_phrases are blanked before matching; context_allow lists words that are not slurs when a given everyday partner word is close by.",
+  "terms": {
+    "slur_race": ["zorbleck"],
+    "slur_lgbt": ["quillspat"],
+    "slur_disability": ["grubwit"],
+    "extremist": ["skullbanner"]
+  },
+  "allow_phrases": [],
+  "context_allow": {}
+}

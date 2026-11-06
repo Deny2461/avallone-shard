@@ -1,0 +1,76 @@
+using System;
+using Server.Text;
+
+namespace Server.Ethics.Evil;
+
+public sealed class UnholySense : Power
+{
+    public UnholySense() =>
+        Definition = new PowerDefinition(
+            0,
+            "Unholy Sense",
+            "Drewrok Velgo",
+            ""
+        );
+
+    public override void BeginInvoke(Player from)
+    {
+        var opposition = Ethic.Hero;
+
+        var enemyCount = 0;
+
+        var maxRange = 18 + from.Power;
+
+        Player primary = null;
+
+        foreach (var pl in opposition.Players)
+        {
+            var mob = pl.Mobile;
+
+            if (mob == null || mob.Map != from.Mobile.Map || !mob.Alive)
+            {
+                continue;
+            }
+
+            if (!mob.InRange(from.Mobile, Math.Max(18, maxRange - pl.Power)))
+            {
+                continue;
+            }
+
+            if (primary == null || pl.Power > primary.Power)
+            {
+                primary = pl;
+            }
+
+            ++enemyCount;
+        }
+
+        using var sb = new ValueStringBuilder(stackalloc char[96]);
+        sb.Append($"You sense {(enemyCount == 0 ? "no" : enemyCount.ToString())} {(enemyCount == 1 ? "enemy" : "enemies")}");
+
+        if (primary != null)
+        {
+            var direction = from.Mobile.GetDirectionTo(primary.Mobile) switch
+            {
+                Direction.East  => "east",
+                Direction.North => "north",
+                Direction.South => "south",
+                Direction.Up    => "north-west",
+                Direction.Down  => "south-east",
+                Direction.Left  => "south-west",
+                Direction.Right => "north-east",
+                _               => "west"
+            };
+
+            sb.Append($", and a strong presence to the {direction}.");
+        }
+        else
+        {
+            sb.Append('.');
+        }
+
+        from.Mobile.LocalOverheadMessage(MessageType.Regular, 0x59, false, sb.ToString());
+
+        FinishInvoke(from);
+    }
+}

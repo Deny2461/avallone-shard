@@ -1,0 +1,114 @@
+using System;
+using ModernUO.Serialization;
+using Server.Collections;
+using Server.Multis;
+
+namespace Server.Items;
+
+[Flippable(0xE80, 0x9A8)]
+[SerializationGenerator(0, false)]
+public partial class StrongBox : BaseContainer, IChoppable
+{
+    [InvalidateProperties]
+    [SerializableField(0)]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private Mobile _owner;
+
+    [InvalidateProperties]
+    [SerializableField(1)]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private BaseHouse _house;
+
+    public StrongBox(Mobile owner, BaseHouse house) : base(0xE80)
+    {
+        _owner = owner;
+        _house = house;
+
+        MaxItems = 25;
+    }
+
+    public override double DefaultWeight => 100;
+    public override int LabelNumber => 1023712;
+
+    public override int DefaultMaxWeight => 0;
+
+    public void OnChop(Mobile from)
+    {
+        if (_house?.Deleted != false || _owner?.Deleted != false || from == _owner || _house.IsOwner(from))
+        {
+            Chop(from);
+        }
+    }
+
+    [AfterDeserialization]
+    private void AfterDeserialization()
+    {
+        Timer.StartTimer(TimeSpan.FromSeconds(1.0), Validate);
+    }
+
+    // A strongbox is only ever its owner's. Without a house, or without an owner still co-owning
+    // that house, it would be a free container anyone could loot, so it goes away instead. A deleted
+    // owner deserializes back as null, which IsCoOwner rejects.
+    private void Validate()
+    {
+        if (_house?.IsCoOwner(_owner) != true)
+        {
+            Destroy();
+        }
+    }
+
+    public override void AddNameProperty(IPropertyList list)
+    {
+        if (_owner != null)
+        {
+            list.Add(1042887, _owner.Name); // a strong box owned by ~1_OWNER_NAME~
+        }
+        else
+        {
+            base.AddNameProperty(list);
+        }
+    }
+
+    public override void OnSingleClick(Mobile from)
+    {
+        if (_owner == null)
+        {
+            base.OnSingleClick(from);
+            return;
+        }
+
+        LabelTo(from, 1042887, _owner.Name); // a strong box owned by ~1_OWNER_NAME~
+
+        if (CheckContentDisplay(from))
+        {
+            LabelTo(from, $"({TotalItems} items, {TotalWeight} stones)");
+        }
+    }
+
+    public override bool IsAccessibleTo(Mobile m) =>
+        _owner?.Deleted != false || _house?.Deleted != false ||
+        m.AccessLevel >= AccessLevel.GameMaster ||
+        m == _owner && _house.IsCoOwner(m) && base.IsAccessibleTo(m);
+
+    private void Chop(Mobile from)
+    {
+        Effects.PlaySound(Location, Map, 0x3B3);
+        from.SendLocalizedMessage(500461); // You destroy the item.
+        Destroy();
+    }
+
+    public Container ConvertToStandardContainer()
+    {
+        var metalBox = new MetalBox();
+        using var subItems = PooledRefList<Item>.Create(Items.Count);
+        subItems.AddRange(Items);
+
+        for (var i = 0; i < subItems.Count; i++)
+        {
+            metalBox.AddItem(subItems[i]);
+        }
+
+        Delete();
+        return metalBox;
+    }
+}

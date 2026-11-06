@@ -1,0 +1,126 @@
+/*************************************************************************
+ * ModernUO                                                              *
+ * Copyright 2019-2026 - ModernUO Development Team                       *
+ * Email: hi@modernuo.com                                                *
+ * File: Guild.cs                                                        *
+ *                                                                       *
+ * This program is free software: you can redistribute it and/or modify  *
+ * it under the terms of the GNU General Public License as published by  *
+ * the Free Software Foundation, either version 3 of the License, or     *
+ * (at your option) any later version.                                   *
+ *                                                                       *
+ * You should have received a copy of the GNU General Public License     *
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>. *
+ *************************************************************************/
+
+using System;
+using System.Collections.Generic;
+
+namespace Server.Guilds;
+
+public enum GuildType
+{
+    Regular,
+    Chaos,
+    Order
+}
+
+public abstract class BaseGuild : ISerializable
+{
+    protected BaseGuild()
+    {
+        Serial = World.NewGuild;
+        World.AddGuild(this);
+    }
+
+    protected BaseGuild(Serial serial) => Serial = serial;
+
+    public abstract string Abbreviation { get; set; }
+    public abstract string Name { get; set; }
+    public abstract GuildType Type { get; set; }
+    public abstract bool Disbanded { get; }
+
+    public abstract void Delete();
+
+    public bool Deleted => Disbanded;
+
+    [IgnoreDupe]
+    [CommandProperty(AccessLevel.Counselor)]
+    public Serial Serial { get; }
+
+    [IgnoreDupe]
+    [CommandProperty(AccessLevel.GameMaster, readOnly: true)]
+    public DateTime Created { get; set; } = Core.Now;
+
+    public abstract void Serialize(IGenericWriter writer);
+
+    public abstract void Deserialize(IGenericReader reader);
+
+    public abstract void OnDelete(Mobile mob);
+
+    public static BaseGuild FindByName(ReadOnlySpan<char> name)
+    {
+        foreach (var g in World.Guilds.Values)
+        {
+            if (g.Name.InsensitiveEquals(name))
+            {
+                return g;
+            }
+        }
+
+        return null;
+    }
+
+    public static BaseGuild FindByAbbrev(ReadOnlySpan<char> abbr)
+    {
+        foreach (var g in World.Guilds.Values)
+        {
+            if (g.Abbreviation.InsensitiveEquals(abbr))
+            {
+                return g;
+            }
+        }
+
+        return null;
+    }
+
+    public static HashSet<BaseGuild> Search(ReadOnlySpan<char> find)
+    {
+        var results = new HashSet<BaseGuild>();
+        find = find.Trim();
+        if (find.IsEmpty)
+        {
+            return results;
+        }
+
+        foreach (var g in World.Guilds.Values)
+        {
+            var name = g.Name.AsSpan();
+
+            var all = true;
+            foreach (var wordRange in find.Split(' '))
+            {
+                var word = find[wordRange];
+                if (word.IsEmpty)
+                {
+                    continue;
+                }
+
+                if (name.InsensitiveContains(word))
+                {
+                    all = false;
+                    break;
+                }
+            }
+
+            if (all)
+            {
+                results.Add(g);
+            }
+        }
+
+        return results;
+    }
+
+    public override string ToString() => $"{Serial} \"{Name} [{Abbreviation}]\"";
+}

@@ -1,0 +1,19 @@
+{
+  "_doc": "SAMPLE gift likes - the real list is not published (players learn it in game by asking). Tips: gold between tip.min and tip.max, taken whole; outside that range it is declined whole. Items: one unit of a listed type (or any subtype) is taken; the rest of a stack comes back. 'say' is what the NPC tells a player who asks what they like (and the hint on a wrong gift). personas = named NPCs by key / wanderers by persona key; roles = townsfolk, first match on their title or class name (a substring test on lower-case '<title> <ClassName>', first match wins, so order matters); default = everyone else (gold tips only). quirks = one odd extra like per NPC (not personas), dealt by a stable hash of the NPC's AI id. Unknown type names are logged and ignored.",
+  "tip": {"min": 10, "max": 250},
+  "default": {"say": "a coin or two - it never goes amiss"},
+  "personas": {
+    "mirabel": {"say": "a bundle of candles for the common room", "items": ["Candle"]},
+    "bram": {"say": "a sharp skinning knife", "items": ["SkinningKnife"]}
+  },
+  "roles": [
+    {"match": ["baker", "cook"], "say": "a sack of flour", "items": ["SackFlour"]},
+    {"match": ["fisher"], "say": "a good fishing pole", "items": ["FishingPole"]},
+    {"match": ["healer"], "say": "clean bandages", "items": ["Bandage"]}
+  ],
+  "quirks": [
+    {"say": "a ripe apple", "items": ["Apple"]},
+    {"say": "a fresh carrot", "items": ["Carrot"]},
+    {"say": "a wheel of cheese", "items": ["CheeseWheel"]}
+  ]
+}

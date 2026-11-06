@@ -1,0 +1,461 @@
+using System;
+using ModernUO.Serialization;
+using Server.Engines.Craft;
+
+namespace Server.Items;
+
+public enum GemType
+{
+    None,
+    StarSapphire,
+    Emerald,
+    Sapphire,
+    Ruby,
+    Citrine,
+    Amethyst,
+    Tourmaline,
+    Amber,
+    Diamond
+}
+
+[SerializationGenerator(5, false)]
+public abstract partial class BaseJewel : Item, ICraftable, IAosItem
+{
+    [EncodedInt]
+    [InvalidateProperties]
+    [SerializableField(0)]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private int _maxHitPoints;
+
+    [SerializableField(3)]
+    [InvalidateProperties]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private GemType _gemType;
+
+    [SerializedIgnoreDupe]
+    [SerializableField(4, setter: "private")]
+    [SerializedCommandProperty(AccessLevel.GameMaster, canModify: true)]
+    private AosAttributes _attributes;
+
+    [SerializedIgnoreDupe]
+    [SerializableField(5, setter: "private")]
+    [SerializedCommandProperty(AccessLevel.GameMaster, canModify: true)]
+    private AosElementAttributes _resistances;
+
+    [SerializedIgnoreDupe]
+    [SerializableField(6, setter: "private")]
+    [SerializedCommandProperty(AccessLevel.GameMaster, canModify: true)]
+    private AosSkillBonuses _skillBonuses;
+
+    [EncodedInt]
+    [SerializableField(7)]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private int _gemCount;
+
+    public BaseJewel(int itemID, Layer layer) : base(itemID)
+    {
+        _attributes = new AosAttributes(this);
+        _resistances = new AosElementAttributes(this);
+        _skillBonuses = new AosSkillBonuses(this);
+        _resource = CraftResource.Iron;
+        Hue = CraftResources.GetHue(_resource);
+        _gemType = GemType.None;
+
+        Layer = layer;
+
+        _hitPoints = _maxHitPoints = Utility.RandomMinMax(InitMinHits, InitMaxHits);
+    }
+
+    [EncodedInt]
+    [SerializableProperty(1)]
+    [CommandProperty(AccessLevel.GameMaster)]
+    public int HitPoints
+    {
+        get => _hitPoints;
+        set
+        {
+            if (value != _hitPoints && _maxHitPoints > 0)
+            {
+                _hitPoints = value;
+
+                if (_hitPoints < 0)
+                {
+                    Delete();
+                }
+                else if (_hitPoints > _maxHitPoints)
+                {
+                    _hitPoints = _maxHitPoints;
+                }
+
+                InvalidateProperties();
+                this.MarkDirty();
+            }
+        }
+    }
+
+    [SerializableField(2, fieldChanged: nameof(OnResourceChanged))]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private CraftResource _resource;
+
+    private void OnResourceChanged(CraftResource oldValue, CraftResource newValue)
+    {
+        Hue = CraftResources.GetHue(_resource);
+    }
+
+    public override int PhysicalResistance => Resistances.Physical;
+    public override int FireResistance => Resistances.Fire;
+    public override int ColdResistance => Resistances.Cold;
+    public override int PoisonResistance => Resistances.Poison;
+    public override int EnergyResistance => Resistances.Energy;
+    public virtual int BaseGemTypeNumber => 0;
+
+    public virtual int InitMinHits => 0;
+    public virtual int InitMaxHits => 0;
+
+    public override int LabelNumber
+    {
+        get
+        {
+            if (_gemType == GemType.None)
+            {
+                return base.LabelNumber;
+            }
+
+            return BaseGemTypeNumber + (int)_gemType - 1;
+        }
+    }
+
+    public virtual int ArtifactRarity => 0;
+
+    public int OnCraft(
+        int quality, bool makersMark, Mobile from, CraftSystem craftSystem, Type typeRes, BaseTool tool,
+        CraftItem craftItem, int resHue
+    )
+    {
+        var resourceType = typeRes ?? craftItem.Resources[0].ItemType;
+
+        Resource = CraftResources.GetFromType(resourceType);
+
+        var context = craftSystem.GetContext(from);
+
+        if (context?.DoNotColor == true)
+        {
+            Hue = 0;
+        }
+
+        if (craftItem.Resources.Count > 1)
+        {
+            resourceType = craftItem.Resources[1].ItemType;
+
+            if (resourceType == typeof(StarSapphire))
+            {
+                GemType = GemType.StarSapphire;
+            }
+            else if (resourceType == typeof(Emerald))
+            {
+                GemType = GemType.Emerald;
+            }
+            else if (resourceType == typeof(Sapphire))
+            {
+                GemType = GemType.Sapphire;
+            }
+            else if (resourceType == typeof(Ruby))
+            {
+                GemType = GemType.Ruby;
+            }
+            else if (resourceType == typeof(Citrine))
+            {
+                GemType = GemType.Citrine;
+            }
+            else if (resourceType == typeof(Amethyst))
+            {
+                GemType = GemType.Amethyst;
+            }
+            else if (resourceType == typeof(Tourmaline))
+            {
+                GemType = GemType.Tourmaline;
+            }
+            else if (resourceType == typeof(Amber))
+            {
+                GemType = GemType.Amber;
+            }
+            else if (resourceType == typeof(Diamond))
+            {
+                GemType = GemType.Diamond;
+            }
+        }
+
+        // T2A jewelry: read gem info from craft context (set by GemSelectTarget).
+        // The entire targeted gem stack is consumed and the piece is named by that
+        // count (e.g. "a 1000 diamond ring").
+        if (context is { PendingGemType: not GemType.None, PendingGemCount: > 0 })
+        {
+            var gemItemType = GetGemItemType(context.PendingGemType);
+            var gemCount = context.PendingGemCount;
+
+            if (gemItemType != null && from.Backpack?.ConsumeTotal(gemItemType, gemCount) == true)
+            {
+                GemType = context.PendingGemType;
+                GemCount = gemCount;
+            }
+            else
+            {
+                // Gems were no longer available (or unknown type): craft a plain piece
+                // rather than naming it for gems that were never consumed.
+                from.SendAsciiMessage("You lack the gemstones to set into this piece.");
+            }
+
+            context.PendingGemType = GemType.None;
+            context.PendingGemCount = 0;
+        }
+
+        return 1;
+    }
+
+    public override void OnSingleClick(Mobile from)
+    {
+        if (!Core.UOTD)
+        {
+            OnSingleClickPreUOTD(from);
+            return;
+        }
+
+        base.OnSingleClick(from);
+    }
+
+    public virtual void OnSingleClickPreUOTD(Mobile from)
+    {
+        var plural = _gemCount > 1;
+        string name;
+        if (this is WeddingRing)
+        {
+            name = $"a {Name}";
+        }
+        else
+        {
+            name = Name;
+
+            if (name == null)
+            {
+                var articleAnName = (TileData.ItemTable[ItemID].Flags & TileFlag.ArticleAn) != 0;
+                name = $"{(articleAnName ? "an" : "a")} {Localization.GetText(LabelNumber).ToLowerInvariant()}";
+            }
+        }
+
+        if (_gemType != GemType.None && _gemCount > 0)
+        {
+            var gemName = GetGemName(_gemType, plural);
+            LabelTo(from, plural
+                ? $"{name} with {_gemCount} {gemName}"
+                : $"{name} with {gemName}");
+        }
+        else
+        {
+            LabelTo(from, name);
+        }
+    }
+
+
+    private static string GetGemName(GemType type, bool plural = false) => type switch
+    {
+        GemType.StarSapphire when plural => "star sapphires",
+        GemType.StarSapphire             => "a star sapphire",
+        GemType.Emerald      when plural => "emeralds",
+        GemType.Emerald                  => "an emerald",
+        GemType.Sapphire     when plural => "sapphires",
+        GemType.Sapphire                 => "a sapphire",
+        GemType.Ruby         when plural => "rubies",
+        GemType.Ruby                     => "a ruby",
+        GemType.Citrine      when plural => "citrines",
+        GemType.Citrine                  => "a citrine",
+        GemType.Amethyst     when plural => "amethysts",
+        GemType.Amethyst                 => "an amethyst",
+        GemType.Tourmaline   when plural => "tourmalines",
+        GemType.Tourmaline               => "a tourmaline",
+        GemType.Amber        when plural => "ambers",
+        GemType.Amber                    => "an amber",
+        GemType.Diamond      when plural => "diamonds",
+        GemType.Diamond                  => "a diamond",
+        _                    when plural => "gems",
+        _                                => "a gem"
+    };
+
+    internal static GemType GetGemType(Item item) => item switch
+    {
+        StarSapphire => GemType.StarSapphire,
+        Emerald      => GemType.Emerald,
+        Sapphire     => GemType.Sapphire,
+        Ruby         => GemType.Ruby,
+        Citrine      => GemType.Citrine,
+        Amethyst     => GemType.Amethyst,
+        Tourmaline   => GemType.Tourmaline,
+        Amber        => GemType.Amber,
+        Diamond      => GemType.Diamond,
+        _            => GemType.None
+    };
+
+    internal static Type GetGemItemType(GemType type) => type switch
+    {
+        GemType.StarSapphire => typeof(StarSapphire),
+        GemType.Emerald      => typeof(Emerald),
+        GemType.Sapphire     => typeof(Sapphire),
+        GemType.Ruby         => typeof(Ruby),
+        GemType.Citrine      => typeof(Citrine),
+        GemType.Amethyst     => typeof(Amethyst),
+        GemType.Tourmaline   => typeof(Tourmaline),
+        GemType.Amber        => typeof(Amber),
+        GemType.Diamond      => typeof(Diamond),
+        _                    => null
+    };
+
+    public override void OnAfterDuped(Item newItem)
+    {
+        if (newItem is not BaseJewel jewel)
+        {
+            return;
+        }
+
+        jewel.Attributes = new AosAttributes(newItem, Attributes);
+        jewel.Resistances = new AosElementAttributes(newItem, Resistances);
+        jewel.SkillBonuses = new AosSkillBonuses(newItem, SkillBonuses);
+
+        // Set hue again because of resource
+        jewel.Hue = Hue;
+    }
+
+    public override void OnAdded(IEntity parent)
+    {
+        if (Core.AOS && parent is Mobile from)
+        {
+            SkillBonuses.AddTo(from);
+
+            var strBonus = Attributes.BonusStr;
+            var dexBonus = Attributes.BonusDex;
+            var intBonus = Attributes.BonusInt;
+
+            if (strBonus != 0 || dexBonus != 0 || intBonus != 0)
+            {
+                var serial = Serial;
+
+                if (strBonus != 0)
+                {
+                    from.AddStatMod(new StatMod(StatType.Str, $"{serial}Str", strBonus, TimeSpan.Zero));
+                }
+
+                if (dexBonus != 0)
+                {
+                    from.AddStatMod(new StatMod(StatType.Dex, $"{serial}Dex", dexBonus, TimeSpan.Zero));
+                }
+
+                if (intBonus != 0)
+                {
+                    from.AddStatMod(new StatMod(StatType.Int, $"{serial}Int", intBonus, TimeSpan.Zero));
+                }
+            }
+
+            from.CheckStatTimers();
+        }
+    }
+
+    public override void OnRemoved(IEntity parent)
+    {
+        if (Core.AOS && parent is Mobile from)
+        {
+            SkillBonuses.Remove();
+
+            var serial = Serial;
+
+            from.RemoveStatMod($"{serial}Str");
+            from.RemoveStatMod($"{serial}Dex");
+            from.RemoveStatMod($"{serial}Int");
+
+            from.CheckStatTimers();
+        }
+    }
+
+    public override void GetProperties(IPropertyList list)
+    {
+        base.GetProperties(list);
+
+        SkillBonuses.GetProperties(list);
+
+        int prop;
+
+        if ((prop = ArtifactRarity) > 0)
+        {
+            list.Add(1061078, prop); // artifact rarity ~1_val~
+        }
+
+        Attributes.GetProperties(list);
+
+        AddResistanceProperties(list);
+
+        if (_hitPoints >= 0 && _maxHitPoints > 0)
+        {
+            list.Add(1060639, $"{_hitPoints}\t{_maxHitPoints}"); // durability ~1_val~ / ~2_val~
+        }
+    }
+
+    private void Deserialize(IGenericReader reader, int version)
+    {
+        _maxHitPoints = reader.ReadEncodedInt();
+        _hitPoints = reader.ReadEncodedInt();
+        _resource = (CraftResource)reader.ReadEncodedInt();
+        _gemType = (GemType)reader.ReadEncodedInt();
+        _attributes = new AosAttributes(this);
+        _attributes.Deserialize(reader);
+        _resistances = new AosElementAttributes(this);
+        _resistances.Deserialize(reader);
+        _skillBonuses = new AosSkillBonuses(this);
+        _skillBonuses.Deserialize(reader);
+    }
+
+    private void MigrateFrom(V4Content content)
+    {
+        _maxHitPoints = content.MaxHitPoints;
+        _hitPoints = content.HitPoints;
+        _resource = content.Resource;
+        _gemType = content.GemType;
+        _attributes = content.Attributes;
+        _resistances = content.Resistances;
+        _skillBonuses = content.SkillBonuses;
+        // _gemCount defaults to 0
+    }
+
+    [AfterDeserialization]
+    private void AfterDeserialization()
+    {
+        var m = Parent as Mobile;
+
+        if (Core.AOS && m != null)
+        {
+            SkillBonuses.AddTo(m);
+        }
+
+        var strBonus = Attributes.BonusStr;
+        var dexBonus = Attributes.BonusDex;
+        var intBonus = Attributes.BonusInt;
+
+        if (m != null && (strBonus != 0 || dexBonus != 0 || intBonus != 0))
+        {
+            var serial = Serial;
+
+            if (strBonus != 0)
+            {
+                m.AddStatMod(new StatMod(StatType.Str, $"{serial}Str", strBonus, TimeSpan.Zero));
+            }
+
+            if (dexBonus != 0)
+            {
+                m.AddStatMod(new StatMod(StatType.Dex, $"{serial}Dex", dexBonus, TimeSpan.Zero));
+            }
+
+            if (intBonus != 0)
+            {
+                m.AddStatMod(new StatMod(StatType.Int, $"{serial}Int", intBonus, TimeSpan.Zero));
+            }
+        }
+
+        m?.CheckStatTimers();
+    }
+}

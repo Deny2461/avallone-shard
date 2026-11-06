@@ -1,0 +1,187 @@
+/*************************************************************************
+ * ModernUO                                                              *
+ * Copyright 2019-2026 - ModernUO Development Team                       *
+ * Email: hi@modernuo.com                                                *
+ * File: IGenericReader.cs                                               *
+ *                                                                       *
+ * This program is free software: you can redistribute it and/or modify  *
+ * it under the terms of the GNU General Public License as published by  *
+ * the Free Software Foundation, either version 3 of the License, or     *
+ * (at your option) any later version.                                   *
+ *                                                                       *
+ * You should have received a copy of the GNU General Public License     *
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>. *
+ *************************************************************************/
+
+using System;
+using System.Buffers;
+using System.Collections;
+using System.IO;
+using System.Net;
+
+namespace Server;
+
+public interface IGenericReader
+{
+    string ReadString(bool intern = false);
+    public string ReadStringRaw(bool intern = false);
+
+    long ReadLong();
+    ulong ReadULong();
+    int ReadInt();
+    uint ReadUInt();
+    short ReadShort();
+    ushort ReadUShort();
+    double ReadDouble();
+    float ReadFloat();
+    byte ReadByte();
+    sbyte ReadSByte();
+    bool ReadBool();
+    Serial ReadSerial();
+    Type ReadType();
+
+    DateTime ReadDateTime() => new(ReadLong(), DateTimeKind.Utc);
+    TimeSpan ReadTimeSpan() => new(ReadLong());
+
+    /// <summary>
+    /// Decodes a legacy delta-time value. Only for reading old-version payloads (version
+    /// fallbacks and migration replays) — current formats store anchored time and read it
+    /// with <see cref="ReadAnchoredTime" />. <see cref="IGenericWriter.WriteDeltaTime" /> is
+    /// obsolete: no current-version format may write delta time.
+    /// </summary>
+    DateTime ReadDeltaTime()
+    {
+        return ReadLong() switch
+        {
+            long.MinValue => DateTime.MinValue,
+            long.MaxValue => DateTime.MaxValue,
+            var delta     => new DateTime(delta + DateTime.UtcNow.Ticks, DateTimeKind.Utc)
+        };
+    }
+
+    /// <summary>
+    /// Elapsed time between the loaded save starting and this load, applied by
+    /// <see cref="ReadAnchoredTime" />. Zero when the source carries no anchor.
+    /// </summary>
+    TimeSpan AnchoredTimeShift => TimeSpan.Zero;
+
+    DateTime ReadAnchoredTime()
+    {
+        var value = ReadDateTime();
+
+        if (value == DateTime.MinValue || value == DateTime.MaxValue)
+        {
+            return value;
+        }
+
+        var shift = AnchoredTimeShift;
+        if (shift == TimeSpan.Zero)
+        {
+            return value;
+        }
+
+        var ticks = value.Ticks + shift.Ticks;
+
+        if (ticks >= DateTime.MaxValue.Ticks)
+        {
+            return DateTime.MaxValue;
+        }
+
+        return ticks <= 0 ? DateTime.MinValue : new DateTime(ticks, DateTimeKind.Utc);
+    }
+    decimal ReadDecimal() => new([ReadInt(), ReadInt(), ReadInt(), ReadInt()]);
+    int ReadEncodedInt()
+    {
+        int v = 0, shift = 0;
+        byte b;
+
+        do
+        {
+            b = ReadByte();
+            v |= (b & 0x7F) << shift;
+            shift += 7;
+        }
+        while (b >= 0x80);
+
+        return v;
+    }
+    IPAddress ReadIPAddress()
+    {
+        var length = ReadByte();
+        // Either 2 ushorts, or 8 ushorts
+        Span<byte> integer = stackalloc byte[length];
+        Read(integer);
+        return Utility.Intern(new IPAddress(integer));
+    }
+    Point3D ReadPoint3D() => new(ReadInt(), ReadInt(), ReadInt());
+    Point2D ReadPoint2D() => new(ReadInt(), ReadInt());
+    Rectangle2D ReadRect2D() => new(ReadPoint2D(), ReadPoint2D());
+    Rectangle3D ReadRect3D() => new(ReadPoint3D(), ReadPoint3D());
+    Map ReadMap() => Map.Maps[ReadByte()];
+    Race ReadRace() => Race.Races[ReadByte()];
+    int Read(Span<byte> buffer);
+    unsafe T ReadEnum<T>() where T : unmanaged, Enum
+    {
+        switch (sizeof(T))
+        {
+            case 1:
+                {
+                    var num = ReadByte();
+                    return *(T*)&num;
+                }
+            case 2:
+                {
+                    var num = ReadShort();
+                    return *(T*)&num;
+                }
+            case 4:
+                {
+                    var num = ReadEncodedInt();
+                    return *(T*)&num;
+                }
+            case 8:
+                {
+                    var num = ReadLong();
+                    return *(T*)&num;
+                }
+        }
+
+        return default;
+    }
+    Guid ReadGuid()
+    {
+        Span<byte> bytes = stackalloc byte[16];
+        Read(bytes);
+        return new Guid(bytes);
+    }
+
+    public BitArray ReadBitArray()
+    {
+        var bitLength = ReadEncodedInt();
+        var byteLength = (bitLength + 7) / 8;
+
+        var buffer = ArrayPool<byte>.Shared.Rent(byteLength);
+        try
+        {
+            Read(buffer.AsSpan(0, byteLength));
+            return new BitArray(buffer) { Length = bitLength };
+        }
+        finally
+        {
+            ArrayPool<byte>.Shared.Return(buffer);
+        }
+    }
+
+    TextDefinition ReadTextDefinition()
+    {
+        return ReadEncodedInt() switch
+        {
+            0 => TextDefinition.Empty,
+            1 => ReadEncodedInt(),
+            2 => ReadString(),
+            _ => null
+        };
+    }
+
+    long Seek(long offset, SeekOrigin origin);
+}

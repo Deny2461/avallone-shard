@@ -1,0 +1,261 @@
+---
+name: modernuo-code-audit
+description: >
+  Auto-trigger whenever writing or modifying .cs files under Projects/. Audits code for ModernUO convention violations. Warnings only - flag issues and ask before fixing.
+---
+
+# ModernUO Code Audit
+
+## When This Activates
+- Any time you write, edit, or modify a `.cs` file under `Projects/`
+- After generating code snippets for the user
+- During code review
+
+## Audit Rules (Warnings Only)
+
+Flag these issues but do NOT auto-fix. Ask the user before making changes.
+
+### 1. LINQ: Know What's Optimized (.NET 10)
+Not all LINQ is banned. .NET 10 JIT/PGO eliminates overhead for specific patterns. Anything not listed below is still forbidden on hot paths.
+
+**Tier 1 — Zero-cost (use freely on hot paths):**
+- `foreach` over `IEnumerable<T>` backed by `T[]`, `List<T>`, `Stack<T>`, `Queue<T>` — PGO devirtualizes the enumerator, zero heap allocation
+- `.Contains()` after a preceding LINQ operator (`.Distinct()`, `.OrderBy()`, `.Reverse()`, `.Union()`, `.Intersect()`, `.Except()`, `.Concat()`, `.SelectMany()`, `.Where().Select()`, `.Skip()`, `.Take()`, `.OfType()`, `.Cast()`, `.Shuffle()`) — LINQ has ~30 specialized overrides that skip the intermediate work (no sort, no HashSet, no buffering)
+- `.Count()` on sized collections (`ICollection<T>`, or after `Range`/`Repeat`/`Skip`/`Take`/`Append`) — O(1) property access, no enumeration
+- `.OrderBy().First()` / `.OrderByDescending().First()` / `.OrderBy().Last()` — O(N) min/max scan, no sort performed
+- `.Shuffle().Take(n)` — reservoir sampling, single pass, O(n) memory
+- `Enumerable.Range()` / `Enumerable.Sequence()` followed by `.Count()`, `.Contains()`, `.ToArray()`, `.ToList()`, `.ElementAt()`, `.Last()` — arithmetic, not enumeration
+
+**Tier 2 — Low overhead (acceptable on warm paths, benchmark if critical):**
+- `.Skip(n).Take(m).ToArray()` on `T[]`/`List<T>` — vectorized `Span<T>.CopyTo` (still allocates output)
+- `.LeftJoin()` / `.RightJoin()` — ~2x faster than manual `GroupJoin`+`SelectMany`+`DefaultIfEmpty`
+- `.Where(predicate)` on `T[]`/`List<T>` — `WhereIterator` still heap-allocates, but enumeration is PGO-optimized. Manual `foreach`+`if` is still faster for true hot paths.
+
+**Tier 3 — Still forbidden on hot paths (write manual code):**
+- `.Select(f).Where(p)` (this order — each intermediate iterator allocates)
+- `.GroupBy()`, `.ToDictionary()`, `.ToHashSet()`, `.ToLookup()` (always allocate internal structures)
+- `.Aggregate()` (delegate overhead per element)
+- `.Sum()` / `.Min()` / `.Max()` on `float`/`double` (no SIMD in LINQ on ARM)
+- `.SelectMany()` when iterating results (not `.Contains()`) — multiple enumerator allocations
+- `.Zip()` when iterating — enumerator allocations
+- Any LINQ over `IAsyncEnumerable<T>` — no PGO/escape analysis
+- Long chains like `.Where().Select().OrderBy().Take()` — each step allocates an iterator
+
+**Prerequisites**: .NET 10, tiered compilation + Dynamic PGO enabled (default). Tier 1 optimizations require ~30+ calls for JIT warmup.
+
+**Quick decision**: If the exact pattern is in Tier 1 → use it. If it's in Tier 2 → acceptable unless profiling shows it's a bottleneck. If it's anything else → manual `for`/`foreach` + `PooledRefList<T>`.
+
+### 2. No Console.WriteLine
+**Bad**: `Console.WriteLine(...)`, `Console.Write(...)`
+**Good**: `private static readonly ILogger logger = LogFactory.GetLogger(typeof(MyClass));` then `logger.Information(...)`, `logger.Warning(...)`, `logger.Error(...)`
+**Requires**: `using Server.Logging;`
+
+### 3. No Concurrency Primitives in Game Code
+**Bad**: `ConcurrentDictionary`, `ConcurrentQueue`, `ConcurrentBag`, `volatile`, `lock(...)`, `Mutex`, `Semaphore`, `Monitor`, `Interlocked`, `ReaderWriterLock`
+**Why**: Server is single-threaded. These add overhead for no benefit.
+**Instead**: Use regular `Dictionary<K,V>`, `List<T>`, plain fields.
+
+### 4. Never Iterate World.Mobiles or World.Items Directly
+**Bad**: `foreach (var m in World.Mobiles.Values)`, `World.Items.Values.Where(...)`
+**Good**: `map.GetMobilesInBounds<T>(bounds)`, `map.GetMobilesInRange<T>(point, range)`, `map.GetItemsInRange<T>(point, range)`
+**Why**: Full world iteration is O(n) over all entities. Spatial queries use sector indexing.
+
+### 5. Clean Up References in OnDelete/OnAfterDelete
+**Check**: Classes with `Item` or `Mobile` references should clean them in `OnDelete()` or `OnAfterDelete()`.
+**Pattern**:
+```csharp
+public override void OnAfterDelete()
+{
+    _someReference = null;
+    base.OnAfterDelete();
+}
+```
+
+### 6. Cancel Timers in OnDelete/OnAfterDelete
+**Check**: Any class with `TimerExecutionToken` or `Timer` fields must cancel them on deletion.
+**Pattern**:
+```csharp
+public override void OnAfterDelete()
+{
+    _timerToken.Cancel();  // For TimerExecutionToken
+    _timer?.Stop();        // For Timer references
+    _timer = null;
+    base.OnAfterDelete();
+}
+```
+
+### 7. Use STArrayPool, Not ArrayPool
+**Bad**: `ArrayPool<T>.Shared.Rent(...)` in game logic
+**Good**: `STArrayPool<T>.Shared.Rent(...)` in game logic
+**Why**: STArrayPool is single-threaded optimized (no locks). Use ArrayPool only in explicitly multi-threaded code.
+**Also**: Always return rented arrays in a `finally` block.
+
+### 8. No new List in Hot Paths
+**Bad**: `var list = new List<Mobile>();` in frequently-called methods
+**Good**: `using var list = PooledRefList<Mobile>.Create();`
+**Why**: PooledRefList uses pooled arrays, zero GC pressure. It's a ref struct (stack-allocated).
+
+### 9. Serialization Class Requirements
+**Check**: Classes with `[SerializationGenerator]` MUST be `partial`.
+**Check**: `[Constructible]` on parameterless constructors for items/mobiles.
+**Check**: `TimerExecutionToken` fields must NOT have `[SerializableField]`.
+**Check**: Use `using ModernUO.Serialization;` when using serialization attributes.
+
+### 10. No Task.Run or new Thread
+**Bad**: `Task.Run(...)`, `new Thread(...)`, `ThreadPool.QueueUserWorkItem(...)` in game code
+**Why**: Game logic runs on the single-threaded event loop. Background threads cause race conditions.
+**Exception**: Server infrastructure code (Projects/Server/Main.cs, World saves) may use threading.
+
+### 11. Never Assume Era
+**Check**: If code uses era-conditional logic (`Core.AOS`, `Core.SE`, etc.) and the user hasn't specified a target era, ASK which expansion to target.
+**Why**: Different eras have dramatically different mechanics.
+
+### 12. Naming Conventions
+**Check**: `_camelCase` for private fields, `PascalCase` for properties/methods/classes.
+**Note**: Legacy code may use `m_` prefix -- don't flag existing `m_` fields but use `_` for new code.
+
+### 13. No Empty Gumps
+**Check**: Any gump (legacy `Gump` constructor, or `BuildLayout`) must not have a code path that produces zero visual elements (no `AddBackground`, no `AddPage` with content, etc.).
+**Why**: The client has no way to close an empty gump — no close button, no right-click dismiss. This leaks a gump slot on both client and server until relog.
+**Common cause**: Early `return` in a constructor or `BuildLayout` when prerequisites aren't met.
+**Fix**: Use a static `DisplayTo(Mobile from)` method that validates prerequisites **before** constructing the gump. Make the constructor `private`. See `Projects/UOContent/Gumps/Go/GoGump.cs` for the canonical pattern.
+
+### 14. PropertyList String Literals Must Be Holes
+**Check**: In any `IPropertyList.Add()` interpolated string, string constants must be wrapped as holes `{"text"}`, not bare literals.
+**Bad**: `list.Add(1060658, $"Chances\t{_charges}");` — "Chances" becomes a delimiter, not an argument.
+**Good**: `list.Add(1060658, $"{"Chances"}\t{_charges}");` — "Chances" is an argument.
+**Why**: The handler treats bare text as delimiters and `{}` contents as arguments. The property list system is used beyond the game client (e.g., web rendering) which must distinguish arguments from delimiters. Only `\t` should be a bare literal.
+**Also**: If you don't know the text for a cliloc number, see `Projects/Server/Localization/Localization.cs` `LoadClilocs()` to learn the binary format, and ask the user where their `cliloc.enu` file is.
+
+### 15. Braces Required on All Control Flow
+**Check**: ALL `if`, `else`, `for`, `foreach`, `while`, `do`, `switch` statements must have braces, even for single-line bodies.
+**Bad**:
+```csharp
+if (condition)
+    DoSomething();
+```
+**Good**:
+```csharp
+if (condition)
+{
+    DoSomething();
+}
+```
+**Why**: Reduces merge conflicts and diff sizes.
+
+### 16. Prefer Switch Expressions and Switch-When Patterns
+**Check**: Where a chain of `if`/`else if` maps inputs to outputs, prefer a switch expression. Where pattern matching with guards improves clarity, prefer `switch`-`when`.
+**Bad**:
+```csharp
+if (type == GemType.StarSapphire) return "star sapphire";
+else if (type == GemType.Emerald) return "emerald";
+else return "gem";
+```
+**Good**:
+```csharp
+return type switch
+{
+    GemType.StarSapphire => "star sapphire",
+    GemType.Emerald      => "emerald",
+    _                    => "gem"
+};
+```
+**Why**: Switch expressions enable JIT/PGO optimization and improve readability.
+**Exception**: Skip if the switch would be unreadable or the code is on a cold path.
+
+### 17. Interpolation Anti-Patterns (handler-aware APIs)
+
+**Context**: Many ModernUO APIs accept `ref RawInterpolatedStringHandler` (`Mobile.SendMessage`/`Say`/`Emote`/etc., `Item.Public/Local/NonlocalOverheadMessage`/`SendLocalizedMessageTo`/`SendMessageTo`, `IPropertyList.Add`, `SpanWriter.WriteAscii`/`WriteLatin1`, gump `AddLabel`/`AddHtml`/`AddHtmlLocalized`, `Html.Center`/`Color`/`Right`). The handler overload renders the interpolation directly into a pooled buffer with **zero `string` allocation** — but only when the call-site argument is a `$"..."` literal directly in the parameter slot.
+
+**Check**: Flag any of the following patterns when the call target is one of those handler-aware APIs. The handler overload is silently bypassed and a `string` is allocated per call.
+
+| Pattern | Fix |
+|---|---|
+| `Send(cond ? $"a" : $"b")` | `if/else` with two calls |
+| `Send(thing switch { 1 => $"a", _ => $"b" })` | `switch` statement, call per arm |
+| `var s = $"foo {x}"; Send(s);` (single-use) | Inline at call site |
+| `Send($"x {value.ToString()}")` | Drop `.ToString()` — handler formats directly |
+| `Send($"x {td.String()}")` | Drop `.String()` — pass `td` directly |
+| `Send($"x {a + b}")` (string concat) | Multiple holes: `Send($"x {a}{b}")` |
+| `Send(string.Format("x {0}", v))` | `Send($"x {v}")` |
+| `Send($"x {items.Aggregate(...)}")` | Build via `ValueStringBuilder`, pass span |
+
+**For lowercase output**, use the `:L` format specifier instead of `value.ToString().ToLowerInvariant()`:
+```csharp
+mob.SendMessage($"You earned a {rank:L} trophy!");          // "gold" not "Gold"
+```
+
+**Why**: These methods are called constantly during gameplay (every chat line, every system message, every gump label, every tooltip). The handler overload exists specifically to eliminate per-call `string` allocation. Each anti-pattern leaks one or more strings per call.
+
+**Severity**: WARNING. Flag and ask before fixing — some patterns (e.g., reused locals across multiple call sites) are intentional and shouldn't be inlined.
+
+**See**: `dev-docs/string-handling.md` § "Interpolation Anti-Patterns" for the full reference with detailed before/after examples.
+
+### 19. No InvalidateProperties From Inside GetProperties
+**Check**: Any property read by a `GetProperties` override — including through helpers — must be a pure read. Flag getters that call `InvalidateProperties()` (or a wrapper like `Invalidate()`) as a side effect.
+**Bad**: a `Rank` getter that lazily recomputes and then calls `Invalidate()`; reading it from `GetProperties` re-enters the build.
+**Good**: invalidate in the setter that actually changes the value, or defer with `Timer.DelayCall(InvalidateProperties)`.
+**Why**: `InvalidateProperties()` rebuilds the list in place (`Reset()` + rebuild). `Reset()` returns the pooled interpolation buffer — which the compiler rents for the whole `$"..."` expression, so every hole is evaluated while it is live — and rewinds the packet cursor. Re-entering mid-build throws `ArgumentNullException` (parameter `"array"`) out of `GetProperties` from a line unrelated to the offending getter, or silently corrupts the tooltip. The engine refuses and logs an error, and `DEBUG` throws, so this shows up as a crash in development.
+**Note**: Lazy recomputation inside a getter is fine. It is the notification that must not happen there.
+
+**See**: `dev-docs/property-lists.md` § "Never Invalidate From Inside `GetProperties`".
+
+### 20. Tick-Count Math Must Be Wraparound-Safe
+**Check**: Every comparison between `Core.TickCount` / `Core.GetTimestamp()` values (or fields
+derived from them — names like `*Until`, `*At`, `*Next*`, `deadline`) must be in subtraction form.
+Flag direct comparisons, zero/sign sentinels, and deadline fields left at their zero default.
+**Bad**: `if (Core.TickCount < _deadline)`; `if (_lastEventAt > 0)` as "has happened";
+`private static long _deadline;` compared before being seeded from a real tick.
+**Good**: `if (Core.TickCount - _deadline < 0)`; a separate `bool` for "has happened"; seeding
+deadline fields from the first observed timestamp.
+**Why**: On some hypervisors — Google Cloud specifically — the VM receives a pass-through of the
+host's never-resetting counter. Tick counts are NOT zero at process start, NOT zero at OS boot,
+can be enormous from the first read, and can wrap negative. Direct comparisons and sign sentinels
+then fail only on those hosts, after long host uptimes — the least reproducible bug class there
+is. Windows has not shown this in testing; Linux has, in production. Subtraction of two ticks
+wraps correctly in two's complement.
+**Note**: `DateTime`/`DateTimeOffset` comparisons are unaffected; this applies only to the
+monotonic tick domain.
+
+**See**: `dev-docs/tick-counts.md` for the full rules and review checklist.
+
+### 21. Comments Explain Why, Never What Changed
+**Check**: Every comment the change adds or edits. Before a PR leaves draft, sweep the whole diff:
+`git diff main...HEAD | grep -nE '^\+.*(//|/\*)'`.
+**Bad**: change narrative ("changed from", "previously", "used to", "no longer", "moved from",
+"was:"); review dialogue ("per review", "reviewer asked", "as discussed", "see PR discussion");
+diff explanation ("added this to fix"); hedges ("I think this is right", "not sure if", "for now");
+commented-out code kept "in case"; restated code (`// increment i`).
+**Good**: an invariant, a protocol/client/era quirk, a coupling between two values, the reason a
+workaround exists — one line where one line will do. `///` docs and terse `//TODO Implement X` stay.
+**Fix**: keep (technical, true without the PR), rewrite (drop the story, keep the invariant), or
+delete; what a future reader still needs goes in the commit message or PR description. Scope is the
+PR's own diff — do not rewrite comments in untouched code.
+**Why**: a comment in `main` is read by someone who never saw the PR, the review thread, or the
+previous version of the line. Narrative references context that does not exist there.
+
+**See**: `dev-docs/code-standards.md` § Comments.
+
+## Severity Levels
+- **ERROR**: Rules 3, 9, 10, 13, 19, 20 (will cause bugs, build failures, or client-side leaks)
+- **WARNING**: Rules 1 (Tier 3 LINQ), 2, 4, 5, 6, 7, 8, 12, 14, 15, 17, 21 (performance/convention issues; 21 is a PR-finalization sweep)
+- **INFO**: Rules 1 (Tier 2 LINQ on warm paths — note it but don't flag as violation), 16 (switch patterns — suggest but don't flag)
+- **ASK**: Rule 11 (need user input)
+
+## How to Report
+When you find violations, report them as:
+```
+[AUDIT] {SEVERITY}: {Description}
+  File: {path}:{line}
+  Suggestion: {fix}
+```
+
+Do NOT silently fix issues. Always flag and ask.
+
+## See Also
+- `dev-docs/code-standards.md` - Full coding standards documentation
+- `dev-docs/claude-skills/modernuo-serialization.md` - Serialization rules
+- `dev-docs/claude-skills/modernuo-timers.md` - Timer cleanup rules
+- `dev-docs/claude-skills/modernuo-threading.md` - Threading model details
+- `dev-docs/claude-skills/modernuo-property-lists.md` - PropertyList interpolation rules
+- `dev-docs/claude-skills/modernuo-bug-reporting.md` - What to do with a bug you were not asked to fix

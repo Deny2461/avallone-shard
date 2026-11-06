@@ -1,0 +1,164 @@
+using ModernUO.Serialization;
+using Server.Gumps;
+using Server.Items;
+using Server.Mobiles;
+using Server.Network;
+
+namespace Server.Engines.Quests.Collector;
+
+[SerializationGenerator(0, false)]
+public partial class Impresario : BaseQuester
+{
+    [Constructible]
+    public Impresario() : base("the impresario")
+    {
+    }
+
+    public override void InitBody()
+    {
+        InitStats(100, 100, 25);
+
+        Hue = Race.Human.RandomSkinHue();
+
+        Female = false;
+        Body = 0x190;
+        Name = NameList.RandomName("male");
+    }
+
+    public override void InitOutfit()
+    {
+        AddItem(new FancyShirt(Utility.RandomDyedHue()));
+        AddItem(new LongPants(Utility.RandomNondyedHue()));
+        AddItem(new Shoes(Utility.RandomNeutralHue()));
+
+        Utility.AssignRandomHair(this);
+        Utility.AssignRandomFacialHair(this);
+    }
+
+    public override bool CanTalkTo(PlayerMobile to) =>
+        to.Quest is CollectorQuest qs && qs.IsObjectiveInProgress(typeof(FindSheetMusicObjective));
+
+    public override void OnTalk(PlayerMobile player, bool contextMenu)
+    {
+        var qs = player.Quest;
+
+        if (qs is not CollectorQuest)
+        {
+            return;
+        }
+
+        var obj = qs.FindObjective<FindSheetMusicObjective>();
+
+        if (obj?.Completed == false)
+        {
+            Direction = GetDirectionTo(player);
+
+            if (obj.IsInRightTheater())
+            {
+                SheetMusicOfferGump.DisplayTo(player);
+            }
+            else
+            {
+                qs.AddConversation(new NoSheetMusicConversation());
+            }
+        }
+    }
+}
+
+public class SheetMusicOfferGump : BaseQuestGump
+{
+    public override bool Singleton => true;
+
+    private SheetMusicOfferGump() : base(75, 25)
+    {
+    }
+
+    public static void DisplayTo(Mobile from)
+    {
+        if (from?.NetState == null)
+        {
+            return;
+        }
+
+        from.SendGump(new SheetMusicOfferGump());
+    }
+
+    protected override void BuildLayout(ref DynamicGumpBuilder builder)
+    {
+        builder.SetNoClose();
+
+        builder.AddPage();
+
+        builder.AddImage(349, 10, 0x24B0);
+        builder.AddImageTiled(349, 130, 100, 120, 0x24B3);
+        builder.AddImageTiled(149, 10, 200, 140, 0x24AF);
+        builder.AddImageTiled(149, 300, 200, 140, 0x24B5);
+        builder.AddImage(349, 300, 0x24B6);
+        builder.AddImage(35, 10, 0x24AE);
+        builder.AddImageTiled(35, 150, 120, 100, 0x24B1);
+        builder.AddImage(35, 300, 0x24B4);
+
+        builder.AddHtmlLocalized(110, 60, 200, 20, 1049069, White); // <STRONG>Conversation Event</STRONG>
+
+        builder.AddImage(65, 14, 0x2776);
+        builder.AddImageTiled(81, 14, 349, 17, 0x2775);
+        builder.AddImage(426, 14, 0x2778);
+
+        builder.AddImageTiled(50, 37, 400, 376, 0xA40);
+        builder.AddAlphaRegion(50, 37, 400, 376);
+
+        builder.AddImage(0, 0, 0x28C8);
+
+        builder.AddImageTiled(75, 90, 200, 1, 0x238D);
+        builder.AddImage(75, 58, 0x2635);
+        builder.AddImage(380, 45, 0xDF);
+
+        // Sure, I have some sheet music for a Gabriel Piete song. I'd be happy to sell you a copy for 10 gold.
+        builder.AddHtmlLocalized(98, 140, 312, 200, 1055107, LightGreen, false, true);
+
+        builder.AddRadio(85, 350, 0x25F8, 0x25FB, true, 1);
+        builder.AddHtmlLocalized(120, 356, 280, 20, 1014088, White); // I accept.
+
+        builder.AddRadio(85, 385, 0x25F8, 0x25FB, false, 0);
+        builder.AddHtmlLocalized(120, 391, 280, 20, 1049012, White); // No thanks, I decline.
+
+        builder.AddButton(340, 390, 0xF7, 0xF8, 1);
+    }
+
+    public override void OnResponse(NetState sender, in RelayInfo info)
+    {
+        if (info.ButtonID != 1 || !info.IsSwitched(1))
+        {
+            return;
+        }
+
+        if (sender.Mobile is not PlayerMobile player)
+        {
+            return;
+        }
+
+        var qs = player.Quest;
+
+        if (qs is not CollectorQuest)
+        {
+            return;
+        }
+
+        var obj = qs.FindObjective<FindSheetMusicObjective>();
+
+        if (obj?.Completed != false)
+        {
+            return;
+        }
+
+        if (player.Backpack?.ConsumeTotal(typeof(Gold), 10) == true || Banker.Withdraw(player, 10))
+        {
+            obj.Complete();
+        }
+        else
+        {
+            // You don't have enough gold to buy the sheet music.
+            player.SendLocalizedMessage(1055108);
+        }
+    }
+}

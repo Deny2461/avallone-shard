@@ -1,0 +1,181 @@
+/*************************************************************************
+ * ModernUO                                                              *
+ * Copyright 2019-2026 - ModernUO Development Team                       *
+ * Email: hi@modernuo.com                                                *
+ * File: BaseMulti.cs                                                    *
+ *                                                                       *
+ * This program is free software: you can redistribute it and/or modify  *
+ * it under the terms of the GNU General Public License as published by  *
+ * the Free Software Foundation, either version 3 of the License, or     *
+ * (at your option) any later version.                                   *
+ *                                                                       *
+ * You should have received a copy of the GNU General Public License     *
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>. *
+ *************************************************************************/
+
+using System;
+using System.Runtime.CompilerServices;
+using ModernUO.Serialization;
+
+namespace Server.Items;
+
+/// <summary>
+/// Whether a multi instance's footprint is eligible for the pathfinding interior-mask cache
+/// (Server.Engines.Pathing.Cache.MultiMaskCache). Stored on
+/// <see cref="BaseMulti.PathInteriorCacheState"/>; recomputed when it is <see cref="Unknown"/>
+/// (e.g. after a move resets it).
+/// </summary>
+public enum MultiInteriorCacheState : byte
+{
+    /// <summary>Not yet determined; recompute on next use.</summary>
+    Unknown = 0,
+
+    /// <summary>Whole footprint terrain is below the floor → interior cells may serve from the cache.</summary>
+    Clean = 1,
+
+    /// <summary>Terrain intrudes into the footprint → fall back to live synthesis.</summary>
+    Dirty = 2
+}
+
+[SerializationGenerator(0, false)]
+public abstract partial class BaseMulti : Item
+{
+    public BaseMulti(int itemID) : base(itemID) => Movable = false;
+
+    [CommandProperty(AccessLevel.GameMaster)]
+    public override int ItemID
+    {
+        get => base.ItemID;
+        set
+        {
+            if (base.ItemID != value)
+            {
+                Map?.OnLeave(this);
+                base.ItemID = value;
+                Map?.OnEnter(this);
+
+                // The footprint shape changes with ItemID (e.g. a boat's heading swaps the MCL), so
+                // the pathfinding interior-cache clean/dirty status must be recomputed.
+                PathInteriorCacheState = MultiInteriorCacheState.Unknown;
+            }
+        }
+    }
+
+    public override int LabelNumber
+    {
+        get
+        {
+            var mcl = Components;
+
+            if (mcl.List.Length > 0)
+            {
+                int id = mcl.List[0].ItemId;
+
+                if (id < 0x4000)
+                {
+                    return 1020000 + id;
+                }
+
+                return 1078872 + id;
+            }
+
+            return base.LabelNumber;
+        }
+    }
+
+    public virtual bool AllowsRelativeDrop => false;
+
+    public virtual MultiComponentList Components => MultiData.GetComponents(ItemID);
+
+    /// <summary>
+    /// Pathfinding interior-mask cache gate (Server.Engines.Pathing.Cache.MultiMaskCache).
+    /// Reset to <see cref="MultiInteriorCacheState.Unknown"/> whenever the footprint's world-terrain
+    /// relationship can change — a location change, a map change, or an ItemID change (e.g. a boat's
+    /// heading swaps the MCL). Subclasses that override <see cref="OnLocationChange"/> /
+    /// <see cref="OnMapChange"/> MUST call base for the reset to fire.
+    /// </summary>
+    public MultiInteriorCacheState PathInteriorCacheState { get; set; }
+
+    public override void OnLocationChange(Point3D oldLocation)
+    {
+        base.OnLocationChange(oldLocation);
+        PathInteriorCacheState = MultiInteriorCacheState.Unknown;
+    }
+
+    public override void OnMapChange()
+    {
+        base.OnMapChange();
+        PathInteriorCacheState = MultiInteriorCacheState.Unknown;
+    }
+
+    public override int GetMaxUpdateRange() => 22;
+
+    public override int GetUpdateRange(Mobile m) => 22;
+
+    public virtual bool Contains(Point2D p) => Contains(p.m_X, p.m_Y);
+
+    public virtual bool Contains(Point3D p) => Contains(p.m_X, p.m_Y);
+
+    public virtual bool Contains(IPoint3D p) => Contains(p.X, p.Y);
+
+    public virtual bool Contains(int x, int y)
+    {
+        var mcl = Components;
+
+        x -= X + mcl.Min.m_X;
+        y -= Y + mcl.Min.m_Y;
+
+        return x >= 0
+               && x < mcl.Width
+               && y >= 0
+               && y < mcl.Height
+               && mcl.Tiles[x][y].Length > 0;
+    }
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool Contains(Mobile m) => m.Map == Map && Contains(m.X, m.Y);
+
+    [MethodImpl(MethodImplOptions.AggressiveInlining)]
+    public bool Contains(Item item) => item.Map == Map && Contains(item.X, item.Y);
+
+    public bool Intersects(Rectangle2D bounds)
+    {
+        if (bounds.X > Location.X + Components.Max.X || bounds.X + bounds.Width < Location.X + Components.Min.X)
+        {
+            return false;
+        }
+
+        if (bounds.Y > Location.Y + Components.Max.Y || bounds.Y + bounds.Height < Location.Y + Components.Min.Y)
+        {
+            return false;
+        }
+
+        var minX = Math.Max(bounds.X, Location.X + Components.Min.X);
+        var maxX = Math.Min(bounds.X + bounds.Width, Location.X + Components.Max.X);
+        var minY = Math.Max(bounds.Y, Location.Y + Components.Min.Y);
+        var maxY = Math.Min(bounds.Y + bounds.Height, Location.Y + Components.Max.Y);
+
+        for (var x = minX; x <= maxX; x++)
+        {
+            for (var y = minY; y <= maxY; y++)
+            {
+                var offsetX = x - Location.X - Components.Min.X;
+                var offsetY = y - Location.Y - Components.Min.Y;
+
+                if (offsetX < 0 || offsetY < 0 || offsetX >= Components.Width || offsetY >= Components.Height)
+                {
+                    continue;
+                }
+
+                // TODO: Use a ref struct
+                var tiles = Components.Tiles[offsetX][offsetY];
+                if (tiles.Length > 0)
+                {
+                    return true;
+                }
+            }
+        }
+
+        return false;
+    }
+}

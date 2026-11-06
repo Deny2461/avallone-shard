@@ -1,0 +1,246 @@
+using System;
+using ModernUO.Serialization;
+
+namespace Server.Items;
+
+[SerializationGenerator(3, false)]
+public abstract partial class FillableContainer : LockableContainer
+{
+    [SerializableField(1)]
+    [DeserializeTimer(nameof(DeserializeRespawnTimer))]
+    private Timer _respawnTimer;
+
+    private void DeserializeRespawnTimer(TimeSpan delay) => _respawnTimer = Timer.DelayCall(delay, Respawn);
+
+    private void MigrateFrom(V2Content content)
+    {
+        _contentType = content.ContentType;
+
+        if (content.RespawnTimerDelay != TimeSpan.MinValue)
+        {
+            DeserializeRespawnTimer(content.RespawnTimerDelay);
+        }
+    }
+
+    public FillableContainer(int itemID) : base(itemID)
+    {
+        Movable = false;
+        _contentType = FillableContentType.None;
+    }
+
+    public virtual int MinRespawnMinutes => 60;
+    public virtual int MaxRespawnMinutes => 90;
+
+    public virtual bool IsLockable => true;
+    public virtual bool IsTrappable => IsLockable;
+
+    public virtual int SpawnThreshold => 2;
+
+    [CommandProperty(AccessLevel.GameMaster)]
+    public DateTime NextRespawnTime => _respawnTimer?.Next ?? DateTime.MinValue;
+
+    [SerializableProperty(0)]
+    [CommandProperty(AccessLevel.GameMaster)]
+    public FillableContentType ContentType
+    {
+        get => _contentType;
+        set
+        {
+            if (_contentType == value)
+            {
+                return;
+            }
+
+            ClearContents();
+            _contentType = value;
+            this.MarkDirty();
+            Respawn();
+        }
+    }
+
+    protected void ClearContents()
+    {
+        for (var i = Items.Count - 1; i >= 0; --i)
+        {
+            if (i < Items.Count)
+            {
+                Items[i].Delete();
+            }
+        }
+    }
+
+    public override void OnMapChange()
+    {
+        base.OnMapChange();
+        AcquireContent();
+    }
+
+    public override void OnLocationChange(Point3D oldLocation)
+    {
+        base.OnLocationChange(oldLocation);
+        AcquireContent();
+    }
+
+    public virtual void AcquireContent()
+    {
+        if (_contentType == FillableContentType.None)
+        {
+            _contentType = FillableContent.Acquire(GetWorldLocation(), Map);
+        }
+
+        if (_contentType != FillableContentType.None)
+        {
+            Respawn();
+        }
+    }
+
+    public override void LockPick(Mobile from)
+    {
+        base.LockPick(from);
+        CheckRespawn();
+    }
+
+    public override void OnItemRemoved(Item item)
+    {
+        CheckRespawn();
+    }
+
+    public override void OnAfterDelete()
+    {
+        base.OnAfterDelete();
+
+        _respawnTimer?.Stop();
+        _respawnTimer = null;
+    }
+
+    public int GetItemsCount()
+    {
+        var count = 0;
+
+        foreach (var item in Items)
+        {
+            count += item.Amount;
+        }
+
+        return count;
+    }
+
+    public void CheckRespawn()
+    {
+        if (_respawnTimer?.Running == true)
+        {
+            return;
+        }
+
+        var delay = TimeSpan.FromMinutes(Utility.RandomMinMax(MinRespawnMinutes, MaxRespawnMinutes));
+        _respawnTimer = Timer.DelayCall(delay, Respawn);
+    }
+
+    public void Respawn()
+    {
+        _respawnTimer?.Stop();
+        _respawnTimer = null;
+
+        if (_contentType == FillableContentType.None || Deleted)
+        {
+            return;
+        }
+
+        GenerateContent();
+
+        var level = FillableContent.Lookup(_contentType).Level;
+
+        if (IsLockable)
+        {
+            Locked = true;
+
+            var difficulty = (level - 1) * 30;
+
+            LockLevel = difficulty - 10;
+            MaxLockLevel = difficulty + 30;
+            RequiredSkill = difficulty;
+        }
+
+        if (IsTrappable && (level > 1 || Utility.Random(5) < 4))
+        {
+            TrapType = level > Utility.Random(5) ? TrapType.PoisonTrap : TrapType.ExplosionTrap;
+            TrapPower = level * Utility.RandomMinMax(10, 30);
+            TrapLevel = level;
+        }
+        else
+        {
+            TrapType = TrapType.None;
+            TrapPower = 0;
+            TrapLevel = 0;
+        }
+    }
+
+    protected virtual int GetSpawnCount()
+    {
+        var itemsCount = GetItemsCount();
+
+        if (itemsCount > SpawnThreshold)
+        {
+            return 0;
+        }
+
+        var maxSpawnCount = (1 + SpawnThreshold - itemsCount) * 2;
+
+        return Utility.RandomMinMax(0, maxSpawnCount);
+    }
+
+    public virtual void GenerateContent()
+    {
+        if (_contentType == FillableContentType.None || Deleted)
+        {
+            return;
+        }
+
+        var content = FillableContent.Lookup(_contentType);
+
+        var toSpawn = GetSpawnCount();
+
+        for (var i = 0; i < toSpawn; ++i)
+        {
+            var item = content.Construct();
+
+            if (item == null)
+            {
+                continue;
+            }
+
+            var list = Items;
+
+            for (var j = 0; j < list.Count; ++j)
+            {
+                var subItem = list[j];
+
+                if (subItem is not Container && subItem.StackWith(null, item, false))
+                {
+                    break;
+                }
+            }
+
+            if (!item.Deleted)
+            {
+                DropItem(item);
+            }
+        }
+    }
+
+    private void Deserialize(IGenericReader reader, int version)
+    {
+        _contentType = (FillableContentType)reader.ReadInt();
+        var respawnTimerNext = reader.ReadDeltaTime();
+        DeserializeRespawnTimer(respawnTimerNext == DateTime.MinValue ? TimeSpan.MinValue : respawnTimerNext - Core.Now);
+    }
+
+    [AfterDeserialization]
+    private void AfterDeserialization()
+    {
+        if (_respawnTimer?.Running != true)
+        {
+            CheckRespawn();
+        }
+    }
+}

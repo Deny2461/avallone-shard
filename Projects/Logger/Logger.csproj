@@ -1,0 +1,19 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+    <PropertyGroup>
+        <RootNamespace>Server</RootNamespace>
+        <AssemblyName>Logger</AssemblyName>
+        <Product>ModernUO Logger</Product>
+        <OutDir>..\..\Distribution\Assemblies</OutDir>
+        <PublishDir>..\..\Distribution\Assemblies</PublishDir>
+        <Configurations>Debug;Release;Analyze</Configurations>
+    </PropertyGroup>
+    <ItemGroup>
+      <PackageReference Update="Serilog" Version="4.4.0" />
+    </ItemGroup>
+    <Target Name="CleanPub" AfterTargets="Clean">
+        <Message Text="Logger: Removing distribution assemblies..."/>
+        <Delete Files="..\..\Distribution\Assemblies\$(AssemblyName).deps.json" ContinueOnError="true"/>
+        <Delete Files="..\..\Distribution\Assemblies\$(AssemblyName).dll" ContinueOnError="true"/>
+        <Delete Files="..\..\Distribution\Assemblies\$(AssemblyName).pdb" ContinueOnError="true"/>
+    </Target>
+</Project>

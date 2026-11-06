@@ -1,0 +1,291 @@
+{
+  "_doc": "5c-2 2c NPC mood (design V1.5 + M7, 2026-11-03). Numbers are START values to tune in dev play. Scores -100..+100. final = clamp(rest + day + clamp(events, -events_cap, +events_cap)).",
+  "enabled": true,
+  "rest": {
+    "_doc": "Townsfolk resting point from a stable hash of the AI id; leaning pleasant (the owner 2026-10-30).",
+    "cheer": [
+      -10,
+      20
+    ],
+    "energy": [
+      -10,
+      10
+    ]
+  },
+  "personas": {
+    "_doc": "Named NPCs (persona_key): resting point + habit (Codex 2c idea 3, the owner 2026-11-03). Habit lines are about the NPC only - never handing anything to the player.",
+    "mirabel": {
+      "cheer": 5,
+      "energy": 0,
+      "habit": {
+        "weary": [
+          "[pours herself a cup from the battered iron teapot, slowly]",
+          "[rests a hand on the iron teapot's lid a moment]",
+          "[nudges the iron teapot nearer the coals, unhurried]"
+        ],
+        "glum": [
+          "[turns the battered iron teapot round on the counter, not looking up]",
+          "[lifts the iron teapot's lid, frowns at it, sets it back]",
+          "[wipes a ring of tea off the counter]"
+        ],
+        "short-tempered": [
+          "[sets the iron teapot down a touch hard]",
+          "[thumps the iron teapot's lid shut]",
+          "[shoves the iron teapot back over the coals]"
+        ],
+        "cheerful": [
+          "[tops up the iron teapot, humming]",
+          "[gives the battered iron teapot a fond pat]",
+          "[pours herself a cup, humming under her breath]"
+        ],
+        "lively": [
+          "[swings the iron teapot onto the coals in one go]",
+          "[tops up the iron teapot and has the lid back on in a blink]",
+          "[rattles the iron teapot's lid, brisk]"
+        ],
+        "content": [
+          "[pours herself a cup from the battered iron teapot]",
+          "[turns the iron teapot's handle toward herself]",
+          "[blows across her cup of tea]"
+        ]
+      }
+    },
+    "bram": {
+      "cheer": 0,
+      "energy": 5
+    }
+  },
+  "day": {
+    "_doc": "Per NPC per Central date (never the epoch). 1 in 6 off, 1 in 6 bright (the owner 2026-11-03, 2c-2); off/bright split by *_mix, each kind's (cheer, energy) push in shape, plus half the ordinary jitter. Ordinary days jitter each axis +-jitter. short-tempered kept the rarest off kind (Codex F7: may be tiresome).",
+    "off_share": 0.1667,
+    "bright_share": 0.1667,
+    "jitter": 10,
+    "off_mix": {
+      "weary": 0.45,
+      "glum": 0.35,
+      "short-tempered": 0.2
+    },
+    "bright_mix": {
+      "cheerful": 0.6,
+      "lively": 0.4
+    },
+    "shape": {
+      "weary": [
+        0,
+        -48
+      ],
+      "glum": [
+        -48,
+        -5
+      ],
+      "short-tempered": [
+        -48,
+        25
+      ],
+      "cheerful": [
+        45,
+        10
+      ],
+      "lively": [
+        10,
+        45
+      ]
+    }
+  },
+  "events_cap": 40,
+  "gift": {
+    "_doc": "NPC-wide, any giver; needs pt on the row (M7.3). One gift ~+10, any number <= saturate.",
+    "impulse": 12,
+    "fade_ph": 4,
+    "saturate": 25
+  },
+  "busy": {
+    "_doc": "Distinct visitors today (Central), cumulative for the day - 'a long day'.",
+    "free": 3,
+    "each": -4,
+    "cap": -20
+  },
+  "hour": [
+    [
+      23,
+      5,
+      -10
+    ],
+    [
+      5,
+      7,
+      -5
+    ]
+  ],
+  "town_news": {
+    "per_u": -15
+  },
+  "bands": {
+    "order": [
+      "short-tempered",
+      "glum",
+      "weary",
+      "cheerful",
+      "lively",
+      "content"
+    ],
+    "edge": 30,
+    "tempered_energy": 10,
+    "strength": {
+      "plain_from": 45,
+      "very_from": 70,
+      "mild": "a little",
+      "strong": "very"
+    }
+  },
+  "greet_percent": {
+    "_doc": "The one greeting-gossip draw (moved from the shard, M7.6). 2b holds still come first.",
+    "default": 25,
+    "content": 25,
+    "weary": 25,
+    "cheerful": 40,
+    "lively": 40,
+    "glum": 0,
+    "short-tempered": 0
+  },
+  "action": {
+    "_doc": "At most one bracketed action per reply; chance per eligible reply; once per conversation and once per NPC per npc_gap_s.",
+    "chance": 0.2,
+    "conversation_idle_s": 600,
+    "npc_gap_s": 300
+  },
+  "actions": {
+    "weary": [
+      "[stifles a yawn]",
+      "[rubs eyes]",
+      "[leans on the counter]",
+      "[rolls a stiff shoulder]",
+      "[blinks slowly]"
+    ],
+    "glum": [
+      "[sighs]",
+      "[stares at the counter a moment]",
+      "[shrugs, half-hearted]",
+      "[lets out a long breath]"
+    ],
+    "short-tempered": [
+      "[drums fingers]",
+      "[clicks tongue]",
+      "[folds arms]",
+      "[huffs]",
+      "[snaps a cloth straight]"
+    ],
+    "cheerful": [
+      "[grins]",
+      "[hums a bar of something]",
+      "[chuckles]",
+      "[brightens]"
+    ],
+    "lively": [
+      "[straightens up, brisk]",
+      "[claps hands once]",
+      "[bounces on heels]",
+      "[rubs hands together]"
+    ],
+    "content": [
+      "[nods]",
+      "[wipes hands]",
+      "[smiles a little]"
+    ]
+  },
+  "causes": {
+    "_doc": "A cause is only an event moving the deciding axis by >= min_points; gift_helped when a gift lifts cheer >= helped_min on a low day (Codex idea 1).",
+    "min_points": 8,
+    "helped_min": 5
+  },
+  "clauses": {
+    "gift": [
+      "A small kindness lifted my spirits.",
+      "Someone was kind to me today.",
+      "A little kindness goes a long way."
+    ],
+    "gift_helped": [
+      "A small kindness helped. Still a heavy sort of day.",
+      "Someone was kind, and that helped. It's still a heavy day.",
+      "A kindness helped a little. Still one of those days."
+    ],
+    "long_day": [
+      "It's been a long day.",
+      "Plenty of folk through today.",
+      "It's been a full day."
+    ],
+    "late_hour": [
+      "It's late.",
+      "The hour's getting on.",
+      "It's been a long night."
+    ],
+    "town_news": [
+      "Folk are uneasy with the news going round.",
+      "The talk in town has everyone on edge.",
+      "Hard news going round lately."
+    ]
+  },
+  "discretion": [
+    "I don't tell tales on my customers.",
+    "That's not mine to tell.",
+    "I keep my customers' business to myself."
+  ],
+  "excuse_patterns": [
+    "\\btoo (tired|weary|worn|exhausted|busy|cross|sour|grumpy|irritable|out of sorts|low|down)\\b[^.!?]{0,40}\\b(to|for)\\b",
+    "\\bin no (mood|humou?r|state|shape) (to|for)\\b",
+    "\\bno (energy|strength|heart) (left )?(for|to)\\b",
+    "\\b(my )?(patience|temper) (is|grows|runs|wears) (thin|short|thinner|shorter|out)\\b",
+    "\\bnot (up to|in the mood)\\b",
+    "\\b(can'?t|cannot) be (bothered|troubled)\\b"
+  ],
+  "clause_echo": [
+    "\\b(long|full) (day|night)\\b|\\bday (has been|is|was|feels) long\\b|\\bfolk through\\b",
+    "\\b(late|the hour)\\b",
+    "\\bkind(ness)?\\b",
+    "\\b(uneasy|on edge|news)\\b"
+  ],
+  "_clause_echo_doc": "Integrated trial 2026-11-03: skip the cause clause when the reply already says its gist (one regex per clause family).",
+  "place": "head",
+  "_place_doc": "Where the mood half of the voice line goes: head = conversation-wide head beside the dials cue (gentler, cache-friendly); turn = beside each turn (M3b: stronger). Re-measured 2026-11-03 per the owner (M10).",
+  "risky_patterns": {
+    "_doc": "the owner 2026-11-03 (M9 answer 1): scenery is fine; these invented claims are not - illness, stock shortage, slow service / busy excuse, other people. Handled like excuse_patterns: retry, then the sentence goes. Tuned on the 318 integrated-trial replies: tone ('I'm busy enough',) is left alone - it is mood, not an invented fact. 2026-11-04 (26b-a4b tuning, narrowed after Codex r2 F5): + the NPC's OWN work excuses ('I've crates to unpack', not), OWN aches (not), debts (not 'I don't owe money').",
+    "illness": [
+      "\\ba (head|stomach|tooth|belly)\\s?ache\\b",
+      "\\b(sick|ill|unwell|poorly|feverish|fever|cough(ing)?|sniffles?|a chill)\\b",
+      "\\bunder the weather\\b",
+      "\\b(my|this) (back|head|knee|hip|chest) (aches|hurts|is (killing|aching|pounding))\\b",
+      "\\b(?:my|these old|the old) (?:bones|joints|back|knees?|feet|hips?) (?:ache|aches|aching|creak|creaks|are sore|is sore|hurts?)\\b",
+      "\\bmy (?:old )?(?:bones|joints) feel the (?:damp|cold|chill|wet)\\b",
+      "\\b(?:I'?ve|I have|I've got|with|and) a (?:heavy|sore|bad|stiff|aching) (?:back|head|knee|hip|leg)\\b",
+      "\\bmy (?:aching|sore|stiff) (?:back|bones|joints|feet|knees|hands)\\b"
+    ],
+    "shortage": [
+      "\\b(crates|shelves|bins|stores|wagons|sacks|barrels|larder|stock)\\b[^.!?]{0,20}\\b(light|bare|empty|thin|low|short|running out)\\b",
+      "\\b(running|run|low|short) (low |out )?(on|of) (stock|supplies|goods|bread|grain|\\w+)\\b",
+      "\\b(sold out|out of stock|nothing left|little left|not much left)\\b"
+    ],
+    "delay": [
+      "\\b(a mountain|a lot|lots|heaps|piles?|plenty|stacks?|a pile) of \\w+ to (sort|move|shift|stack|count|finish|do|get through|haul)\\b",
+      "\\b(keep|kept) you waiting\\b|\\bbe a while\\b|\\b(behind|backed up) (on|with)\\b|\\btoo busy\\b",
+      "\\btoo much (work|to do)\\b",
+      "\\b(?:I'?ve|I have|I've got|I have got|there'?s|there are|we'?ve got)\\b[^.!?]{0,30}?\\b(?:crates|sacks|grain|flour|stock|goods|orders|barrels|boxes|chores|work|a list|a long list|much|plenty|deliveries|bales)\\b[^.!?]{0,25}?\\bto (?:unpack|mend|move|weigh|stack|haul|shift|count|sort|finish|get through|be moved|be done|be unpacked|be counted|be stacked)\\b(?![^.!?]{0,15}\\b(?:for you|your)\\b)",
+      "\\btoo much (?:work|to do)\\b"
+    ],
+    "people": [
+      "\\bmy (husband|wife|son|daughter|mother|mum|father|da|brother|sister|boy|girl|lad|lass|neighbou?r|apprentice|cousin|aunt|uncle|man|missus)\\b",
+      "\\b(a|some|that|the) (customer|fellow|man|woman|lad|lass|traveller|stranger|brute|thief|drunk|guard)s? (was|were|came|tried|kept|stole|broke|yelled|shouted|argued|left)\\b",
+      "(?<!no )(?<!any )\\b(?:a |my |in )?debts? (?:to|with|owed)\\b",
+      "(?<!n't )(?<!not )(?<!never )\\b(?:I|we) (?:still )?owe[sd]? (?:money|coin|gold|\\w+ (?:coins?|gold|crowns))\\b"
+    ]
+  },
+  "voice_style": false,
+  "style": {
+    "_doc": "M11 trial (the owner 2026-11-03): a speaking-style hint per band, used by voice when voice_style is true. Tone only - no reasons, no excuses, no stage actions. 2026-11-04: lively reworded - read as curt on gemma4:26b-a4b (10/48 judged short-tempered). Round 2: dropped - it read cheerful and warmed strangers (22 judge votes vs 4).",
+    "weary": "Speak like someone worn out: fewer, slower words, a little flat, perhaps a pause.",
+    "glum": "Speak like someone low in spirits: quiet and flat, little enthusiasm, no exclamations.",
+    "short-tempered": "Speak curtly: clipped, impatient, straight to the point.",
+    "cheerful": "Speak warmly and brightly: friendly and pleased, perhaps a light joke.",
+    "lively": "Speak with energy and pace: quick, bouncy words, keen to get things moving - full of beans, never curt or impatient.",
+    "content": "Speak in your ordinary, even way."
+  }
+}

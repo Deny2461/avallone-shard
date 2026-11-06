@@ -1,0 +1,724 @@
+{
+ "version": "2026-11-01a",
+ "_note": "Hand-made word list for FINDING memories only (design v1.2 §V1.2, §V1.11 #5). Words map to a concept; concepts have parents. Never used to change a stored fact. Drift swaps and plausibility bounds get their own files in step 2d.",
+ "concepts": {
+  "ANIMAL": {
+   "label": "animals",
+   "parents": [],
+   "words": [
+    "animal",
+    "animals",
+    "beast",
+    "beasts",
+    "creature",
+    "creatures"
+   ]
+  },
+  "PET": {
+   "label": "pets",
+   "parents": [
+    "ANIMAL"
+   ],
+   "words": [
+    "pet",
+    "pets",
+    "companion animal"
+   ]
+  },
+  "MOUNT": {
+   "label": "mounts",
+   "parents": [
+    "ANIMAL"
+   ],
+   "words": [
+    "ride"
+   ]
+  },
+  "RIDING_MOUNT": {
+   "label": "steeds",
+   "parents": [
+    "MOUNT"
+   ],
+   "words": [
+    "steed",
+    "steeds",
+    "mount",
+    "mounts",
+    "charger"
+   ]
+  },
+  "PACK_ANIMAL": {
+   "label": "pack animals",
+   "parents": [
+    "ANIMAL"
+   ],
+   "words": [
+    "pack animal",
+    "beast of burden"
+   ]
+  },
+  "HORSE": {
+   "label": "horses",
+   "parents": [
+    "RIDING_MOUNT"
+   ],
+   "words": [
+    "horse",
+    "horses",
+    "stallion",
+    "mare",
+    "pony",
+    "colt",
+    "filly",
+    "nag",
+    "packhorse"
+   ]
+  },
+  "MULE": {
+   "label": "mules",
+   "parents": [
+    "PACK_ANIMAL",
+    "MOUNT"
+   ],
+   "words": [
+    "mule",
+    "mules",
+    "donkey"
+   ]
+  },
+  "LLAMA": {
+   "label": "llamas",
+   "parents": [
+    "PACK_ANIMAL",
+    "RIDING_MOUNT"
+   ],
+   "words": [
+    "llama",
+    "llamas"
+   ]
+  },
+  "OSTARD": {
+   "label": "ostards",
+   "parents": [
+    "RIDING_MOUNT"
+   ],
+   "words": [
+    "ostard",
+    "ostards"
+   ]
+  },
+  "DOG": {
+   "label": "dogs",
+   "parents": [
+    "PET"
+   ],
+   "words": [
+    "dog",
+    "dogs",
+    "hound",
+    "hounds",
+    "pup",
+    "puppy",
+    "mutt",
+    "wolf",
+    "wolves"
+   ]
+  },
+  "CAT": {
+   "label": "cats",
+   "parents": [
+    "PET"
+   ],
+   "words": [
+    "cat",
+    "cats",
+    "kitten",
+    "kitty",
+    "panther",
+    "cougar"
+   ]
+  },
+  "BIRD": {
+   "label": "birds",
+   "parents": [
+    "PET"
+   ],
+   "words": [
+    "bird",
+    "birds",
+    "raven",
+    "crow",
+    "hawk",
+    "falcon",
+    "parrot"
+   ]
+  },
+  "BEAR": {
+   "label": "bears",
+   "parents": [
+    "ANIMAL"
+   ],
+   "words": [
+    "bear",
+    "bears",
+    "grizzly"
+   ]
+  },
+  "DRAGON": {
+   "label": "dragons",
+   "parents": [
+    "ANIMAL"
+   ],
+   "words": [
+    "dragon",
+    "dragons",
+    "wyrm",
+    "wyrms",
+    "drake",
+    "drakes",
+    "wyvern"
+   ]
+  },
+  "SWAMP_DRAGON": {
+   "label": "swamp dragons",
+   "parents": [
+    "RIDING_MOUNT",
+    "DRAGON"
+   ],
+   "words": [
+    "swamp dragon"
+   ]
+  },
+  "TRADE": {
+   "label": "trades",
+   "parents": [],
+   "words": [
+    "trade",
+    "craft",
+    "work",
+    "job",
+    "profession",
+    "livelihood",
+    "occupation",
+    "career",
+    "calling"
+   ]
+  },
+  "SMITH": {
+   "label": "smithing",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "blacksmith",
+    "smith",
+    "armourer",
+    "armorer",
+    "weaponsmith"
+   ]
+  },
+  "TAILOR": {
+   "label": "tailoring",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "tailor",
+    "weaver",
+    "seamstress"
+   ]
+  },
+  "CARPENTER": {
+   "label": "carpentry",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "carpenter",
+    "woodworker",
+    "lumberjack",
+    "woodcutter",
+    "bowyer",
+    "fletcher"
+   ]
+  },
+  "FISHER": {
+   "label": "fishing",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "fisherman",
+    "fisher",
+    "fisherwoman",
+    "angler",
+    "sailor"
+   ]
+  },
+  "MINER": {
+   "label": "mining",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "miner"
+   ]
+  },
+  "MAGE": {
+   "label": "magic",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "mage",
+    "wizard",
+    "sorcerer",
+    "sorceress",
+    "alchemist",
+    "necromancer",
+    "scribe"
+   ]
+  },
+  "BARD": {
+   "label": "music",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "bard",
+    "minstrel",
+    "musician",
+    "singer"
+   ]
+  },
+  "HEALER": {
+   "label": "healing",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "healer",
+    "herbalist",
+    "physician",
+    "nurse"
+   ]
+  },
+  "TAMER": {
+   "label": "animal taming",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "tamer",
+    "ranger",
+    "shepherd",
+    "hunter",
+    "trapper"
+   ]
+  },
+  "WARRIOR": {
+   "label": "fighting",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "warrior",
+    "knight",
+    "paladin",
+    "mercenary",
+    "soldier",
+    "swordsman",
+    "fighter",
+    "archer"
+   ]
+  },
+  "MERCHANT": {
+   "label": "trading",
+   "parents": [
+    "TRADE"
+   ],
+   "words": [
+    "merchant",
+    "trader",
+    "tinker",
+    "jeweler",
+    "jeweller",
+    "baker",
+    "cook",
+    "butcher",
+    "farmer",
+    "brewer",
+    "innkeeper",
+    "cartographer",
+    "adventurer"
+   ]
+  },
+  "PLACE": {
+   "label": "places",
+   "parents": [],
+   "words": [
+    "town",
+    "city",
+    "village",
+    "home"
+   ]
+  },
+  "BRITAIN": {
+   "label": "Britain",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "britain"
+   ]
+  },
+  "MINOC": {
+   "label": "Minoc",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "minoc"
+   ]
+  },
+  "VESPER": {
+   "label": "Vesper",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "vesper"
+   ]
+  },
+  "TRINSIC": {
+   "label": "Trinsic",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "trinsic"
+   ]
+  },
+  "YEW": {
+   "label": "Yew",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "yew"
+   ]
+  },
+  "MOONGLOW": {
+   "label": "Moonglow",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "moonglow"
+   ]
+  },
+  "MAGINCIA": {
+   "label": "Magincia",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "magincia"
+   ]
+  },
+  "JHELOM": {
+   "label": "Jhelom",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "jhelom"
+   ]
+  },
+  "SKARA_BRAE": {
+   "label": "Skara Brae",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "skara brae",
+    "skara"
+   ]
+  },
+  "COVE": {
+   "label": "Cove",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "cove"
+   ]
+  },
+  "SERPENTS_HOLD": {
+   "label": "Serpent's Hold",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "serpents hold",
+    "serpent's hold"
+   ]
+  },
+  "BUCS_DEN": {
+   "label": "Buccaneer's Den",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "buccaneers den",
+    "buccaneer's den",
+    "bucs den"
+   ]
+  },
+  "NUJELM": {
+   "label": "Nujel'm",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "nujelm",
+    "nujel'm"
+   ]
+  },
+  "OCLLO": {
+   "label": "Ocllo",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "ocllo"
+   ]
+  },
+  "PAPUA": {
+   "label": "Papua",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "papua"
+   ]
+  },
+  "DELUCIA": {
+   "label": "Delucia",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "delucia"
+   ]
+  },
+  "WIND": {
+   "label": "Wind",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "wind"
+   ]
+  },
+  "LUNA": {
+   "label": "Luna",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "luna"
+   ]
+  },
+  "UMBRA": {
+   "label": "Umbra",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "umbra"
+   ]
+  },
+  "ZENTO": {
+   "label": "Zento",
+   "parents": [
+    "PLACE"
+   ],
+   "words": [
+    "zento"
+   ]
+  },
+  "DRINK": {
+   "label": "drink",
+   "parents": [],
+   "words": [
+    "ale",
+    "beer",
+    "mead",
+    "wine",
+    "drink",
+    "drinks",
+    "drinking",
+    "drunk",
+    "cider",
+    "grog",
+    "liquor"
+   ]
+  },
+  "FOOD": {
+   "label": "food",
+   "parents": [],
+   "words": [
+    "food",
+    "meal",
+    "stew",
+    "bread",
+    "pie",
+    "supper",
+    "dinner",
+    "breakfast"
+   ]
+  },
+  "LODGING": {
+   "label": "rooms",
+   "parents": [],
+   "words": [
+    "room",
+    "rooms",
+    "bed",
+    "lodging"
+   ]
+  },
+  "TRAVEL": {
+   "label": "travel",
+   "parents": [],
+   "words": [
+    "travel",
+    "travelling",
+    "traveling",
+    "journey",
+    "road",
+    "heading",
+    "voyage",
+    "trip"
+   ]
+  },
+  "FISHING": {
+   "label": "fishing",
+   "parents": [],
+   "words": [
+    "fish",
+    "fishing",
+    "fished",
+    "boots",
+    "net"
+   ]
+  },
+  "LAMP": {
+   "label": "lamps",
+   "parents": [],
+   "words": [
+    "lamp",
+    "lamps",
+    "lantern",
+    "lanterns",
+    "candle",
+    "candles"
+   ]
+  },
+  "DUNGEON": {
+   "label": "dungeons",
+   "parents": [],
+   "words": [
+    "dungeon",
+    "dungeons",
+    "destard",
+    "despise",
+    "covetous",
+    "hythloth",
+    "ice dungeon",
+    "fire dungeon"
+   ]
+  },
+  "FIGHT": {
+   "label": "fights",
+   "parents": [],
+   "words": [
+    "fight",
+    "fought",
+    "battle",
+    "slew",
+    "slain",
+    "duel"
+   ]
+  },
+  "GOLD": {
+   "label": "money",
+   "parents": [],
+   "words": [
+    "gold",
+    "coin",
+    "coins",
+    "money",
+    "debt",
+    "owe",
+    "owed",
+    "loan"
+   ]
+  },
+  "FAMILY": {
+   "label": "family",
+   "parents": [],
+   "words": [
+    "wife",
+    "husband",
+    "son",
+    "daughter",
+    "mother",
+    "father",
+    "brother",
+    "sister",
+    "family",
+    "child",
+    "children",
+    "baby",
+    "married",
+    "wedding"
+   ]
+  },
+  "DEATH": {
+   "label": "death",
+   "parents": [],
+   "words": [
+    "died",
+    "dead",
+    "death",
+    "funeral",
+    "grave",
+    "buried",
+    "killed"
+   ]
+  },
+  "HOUSE": {
+   "label": "houses",
+   "parents": [],
+   "words": [
+    "house",
+    "tower",
+    "castle",
+    "cottage"
+   ]
+  },
+  "SHIP": {
+   "label": "ships",
+   "parents": [],
+   "words": [
+    "ship",
+    "boat",
+    "galleon",
+    "sail",
+    "sailing"
+   ]
+  }
+ }
+}

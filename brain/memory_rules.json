@@ -1,0 +1,56 @@
+{
+ "version": "2026-10-31a",
+ "_note": "Phase 5c-2 step 2a memory rules (design v1.2). All fade times are MEMORY hours (the shard's memory clock mpt, D2b); the mention cooldown is PLAYED hours (pt). Starting values to tune in dev play.",
+ "fade_memory_hours": {
+  "light": 12,
+  "mid": 30,
+  "heavy": 60
+ },
+ "request_fade_memory_hours": 60,
+ "habit_days": 3,
+ "habit_fade_memory_hours": 120,
+ "reinforce_step": 0.5,
+ "reinforce_cap": 2.5,
+ "hot": {
+  "fact": 4,
+  "request": 4,
+  "episode": 8,
+  "habit": 4
+ },
+ "max_cards": 4,
+ "budget_chars": 600,
+ "cooldown_played_hours": 3,
+ "heavy_concepts": [
+  "DEATH",
+  "FAMILY",
+  "DRAGON",
+  "GOLD"
+ ],
+ "interests": {
+  "mirabel": [
+   "DRINK",
+   "FOOD",
+   "LODGING",
+   "TRAVEL",
+   "PET",
+   "MOUNT",
+   "PACK_ANIMAL",
+   "GOLD",
+   "PLACE"
+  ]
+ },
+ "memory_cues": [
+  "remember",
+  "recall",
+  "forget",
+  "forgotten",
+  "know me",
+  "last time",
+  "again",
+  "before",
+  "earlier",
+  "how is",
+  "how's",
+  "hows"
+ ]
+}

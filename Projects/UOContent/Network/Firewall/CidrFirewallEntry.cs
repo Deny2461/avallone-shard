@@ -1,0 +1,60 @@
+/*************************************************************************
+ * ModernUO                                                              *
+ * Copyright 2019-2026 - ModernUO Development Team                       *
+ * Email: hi@modernuo.com                                                *
+ * File: CidrFirewallEntry.cs                                            *
+ *                                                                       *
+ * This program is free software: you can redistribute it and/or modify  *
+ * it under the terms of the GNU General Public License as published by  *
+ * the Free Software Foundation, either version 3 of the License, or     *
+ * (at your option) any later version.                                   *
+ *                                                                       *
+ * You should have received a copy of the GNU General Public License     *
+ * along with this program.  If not, see <http://www.gnu.org/licenses/>. *
+ *************************************************************************/
+
+using System;
+using System.Net;
+using System.Net.Sockets;
+
+namespace Server.Network;
+
+public class CidrFirewallEntry : BaseFirewallEntry
+{
+    public override UInt128 MinIpAddress { get; }
+    public override UInt128 MaxIpAddress { get; }
+
+    public CidrFirewallEntry(string ipAddressOrCidr)
+    {
+        // Core owns the CIDR -> normalized range parse.
+        if (!IPAddressUtility.TryParseCidrRange(ipAddressOrCidr, out var min, out var max))
+        {
+            throw new ArgumentException("Invalid IP address or CIDR.", nameof(ipAddressOrCidr));
+        }
+
+        MinIpAddress = min;
+        MaxIpAddress = max;
+    }
+
+    public CidrFirewallEntry(IPAddress minAddress, IPAddress maxAddress)
+    {
+        MinIpAddress = minAddress.ToUInt128();
+        MaxIpAddress = maxAddress.ToUInt128();
+    }
+
+    public CidrFirewallEntry(IPAddress ipAddress, int prefixLength)
+    {
+        Span<byte> bytes = stackalloc byte[16];
+
+        if (ipAddress.AddressFamily != AddressFamily.InterNetworkV6)
+        {
+            prefixLength += 96; // 32 -> 128
+        }
+
+        ipAddress.WriteMappedIPv6To(bytes);
+
+        MinIpAddress = Utility.CreateCidrAddress(bytes, prefixLength, false);
+        MaxIpAddress = Utility.CreateCidrAddress(bytes, prefixLength, true);
+    }
+
+}

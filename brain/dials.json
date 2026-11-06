@@ -1,0 +1,181 @@
+{
+  "_doc": "5c-2 2b relationship dials. Design: wiki Projects/Avallone-Memory-Affinity-Design.md 'Step 2b - relationship dials: DESIGN v1' + B12. Every number is a START value to tune in dev play. A fourth dial = a new block here plus its code; no table change. Reloaded when the file changes.",
+  "enabled": true,
+  "cue_place": "standing",
+  "_cue_place_doc": "standing = in the conversation-wide head (cache-friendly, gentler); situation = beside each turn (stronger). Pick in dev play.",
+  "env_cap": 20,
+  "trust": {
+    "_doc": "From KARMA (-15000..15000). Each NPC (stable hash of its id): the karma T above which it starts to trust (trust grows over width W); below T it treats you as a stranger (0); NEGATIVE karma brings distrust over width W_neg. Leaning -1 (inverted: the bad are trusted, the good mistrusted) for this share.",
+    "T": [
+      0,
+      8000
+    ],
+    "W": [
+      2000,
+      5000
+    ],
+    "inverted_share": 0.1,
+    "inverted_share_shady": 0.7,
+    "W_neg": [
+      1500,
+      4000
+    ]
+  },
+  "respect": {
+    "_doc": "From FAME (0..15000). Each NPC: the fame T above which it starts to respect you (over width W); below it, 'takes you as it finds you' (0). Inverted share: the cynic who sneers at the famous. Public-deed stories about this player that reached the NPC's town add deed_each, at most deed_cap, while the story lives.",
+    "T": [
+      500,
+      10000
+    ],
+    "W": [
+      1500,
+      4000
+    ],
+    "inverted_share": 0.05,
+    "deed_types": [
+      "kill_notable",
+      "tame_notable"
+    ],
+    "deed_each": 5,
+    "deed_cap": 15
+  },
+  "shady_towns": [
+    "Buccaneer's Den"
+  ],
+  "shady_roles": [
+    "thief",
+    "beggar",
+    "pirate",
+    "brigand",
+    "rogue"
+  ],
+  "unease": {
+    "_doc": "Town unease u in 0..1 from stories that really reached the town (exposure). + unsettling, - reassuring; each story fades linearly over its own lifetime; repeats of one character + kind within repeat_window_h count x repeat_mult (then 0). Comic kinds are 0. gm_planted: the story's own 'unease' fact (-1..1) once the GM command can set it; absent = 0.",
+    "weights": {
+      "murder": 0.6,
+      "died_notable": 0.3,
+      "pet_died": 0.1,
+      "kill_notable": -0.3,
+      "tame_notable": -0.1
+    },
+    "repeat_window_h": 24,
+    "repeat_mult": [
+      1.0,
+      0.5,
+      0.25
+    ],
+    "trust_per_u": -15,
+    "respect_per_u": 10
+  },
+  "ambience": {
+    "_doc": "Game hour at the NPC ('now', not a clock). Night = hour >= night[0] or < night[1]. The moons matter only to superstitious NPCs (see moons).",
+    "night": [
+      22,
+      5
+    ],
+    "night_trust": -5,
+    "superstitious_share": 0.15,
+    "moons": {
+      "_doc": "the owner, chat, 2026-11-02: two moons, both on real time. glow = brightness of the real moon x brightness of an 18 h moon, each 0 (new).. 1 (full). Each superstitious NPC has its own line on the glow (from `line`, softness from `width`); above it they are spooked - trust down, up to spooked_trust. real_new_epoch = a real new moon, 2000-01-06 18:14 UTC; fast_new_epoch is arbitrary.",
+      "real_days": 29.530588853,
+      "real_new_epoch": 947182440,
+      "fast_hours": 18,
+      "fast_new_epoch": 0,
+      "line": [
+        0.4,
+        0.8
+      ],
+      "width": [
+        0.1,
+        0.25
+      ],
+      "spooked_trust": -15
+    }
+  },
+  "warmth": {
+    "_doc": "Rest point + daily contributions fading on the memory clock (half_life_mh memory hours). Only rows that carry the memory clock (2b on) count; older visits count for familiarity only.",
+    "rest_default": 5,
+    "rest_by_trade": {
+      "vendor": 10,
+      "healer": 15,
+      "banker": 5
+    },
+    "rest_spread": 10,
+    "cool_share": 0.15,
+    "cool_by": [
+      10,
+      20
+    ],
+    "half_life_mh": 24,
+    "visit_day": 2,
+    "trade_day": 1,
+    "hateful_day": -20,
+    "gift": {
+      "_doc": "An accepted gift (the shard allows one per NPC + character + day): base x (liked, or by tip size) / (1 + gifts in the previous recent_mh memory hours), fading like the rest.",
+      "base": 4,
+      "liked": 1.0,
+      "value": {
+        "small": 0.5,
+        "fair": 0.75,
+        "generous": 1.0
+      },
+      "recent_mh": 72
+    }
+  },
+  "personas": {
+    "_doc": "Named NPC overrides (persona_key): warmth_rest, superstitious, trust_T/trust_W/trust_lean, respect_T/respect_W/respect_lean.",
+    "mirabel": {
+      "warmth_rest": 10,
+      "superstitious": false
+    },
+    "bram": {
+      "warmth_rest": 10
+    }
+  },
+  "bands": {
+    "edges": [
+      -60,
+      -20,
+      20,
+      60
+    ],
+    "warmth": [
+      "you are deeply hostile to them because of their conduct - stay within the house rules and give normal service",
+      "you are cool towards them: be brief and businesslike",
+      "you feel nothing much either way about them",
+      "you like them: be friendly",
+      "you are fond of them: be warm and glad to see them"
+    ],
+    "trust": [
+      "you do not trust them at all: keep your own affairs and any gossip to yourself and take nothing they claim on faith",
+      "you are wary of them: say little about yourself or anyone else",
+      "you trust them no more than any stranger",
+      "you trust them: you may speak a little more freely",
+      "you trust them completely: speak openly"
+    ],
+    "respect": [
+      "you think little of them and it shows",
+      "you are not impressed by them",
+      "you take them as you find them",
+      "you think them capable",
+      "you hold them in high regard: treat them with some deference"
+    ],
+    "familiarity_days": [
+      1,
+      3,
+      10
+    ],
+    "familiarity": [
+      "they are a stranger to you",
+      "you have seen them once or twice",
+      "you know them by sight",
+      "they are a regular"
+    ]
+  },
+  "gossip": {
+    "_doc": "Enforced in code: trust below trust_below -> no live gossip (asked or volunteered); warmth below greet_warmth_below -> no gossip volunteered on a greeting; familiarity (visit days) below greet_familiarity_min -> no gossip volunteered on a greeting (the owner, 2026-11-02). Held = ALL news kept back: live deeds, made-up chatter and the Rumours/ lore pages.",
+    "trust_below": -20,
+    "greet_warmth_below": -20,
+    "greet_familiarity_min": 3
+  }
+}

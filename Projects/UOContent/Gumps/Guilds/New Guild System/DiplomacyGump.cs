@@ -1,0 +1,352 @@
+using System.Collections.Generic;
+using Server.Gumps;
+using Server.Mobiles;
+using Server.Network;
+
+namespace Server.Guilds
+{
+    public enum GuildDisplayType
+    {
+        All,
+        AwaitingAction,
+        Relations
+    }
+
+    public class GuildDiplomacyGump : BaseGuildListGump<Guild>
+    {
+        private readonly TextDefinition _lowerText;
+        private GuildDisplayType _display;
+
+        public GuildDiplomacyGump(PlayerMobile pm, Guild g)
+            : this(
+                pm,
+                g,
+                NameComparer.Instance,
+                true,
+                "",
+                0,
+                GuildDisplayType.All,
+                World.Guilds.Values.SafeConvertList<BaseGuild, Guild>(),
+                1063136 + (int)GuildDisplayType.All
+            )
+        {
+        }
+
+        public GuildDiplomacyGump(
+            PlayerMobile pm, Guild g, IComparer<Guild> currentComparer, bool ascending, string filter,
+            int startNumber, GuildDisplayType display
+        )
+            : this(
+                pm,
+                g,
+                currentComparer,
+                ascending,
+                filter,
+                startNumber,
+                display,
+                World.Guilds.Values.SafeConvertList<BaseGuild, Guild>(),
+                1063136 + (int)display
+            )
+        {
+        }
+
+        public GuildDiplomacyGump(
+            PlayerMobile pm, Guild g, IComparer<Guild> currentComparer, bool ascending, string filter,
+            int startNumber, List<Guild> list, TextDefinition lowerText
+        )
+            : this(pm, g, currentComparer, ascending, filter, startNumber, GuildDisplayType.All, list, lowerText)
+        {
+        }
+
+        public GuildDiplomacyGump(
+            PlayerMobile pm, Guild g, bool ascending, string filter, int startNumber, List<Guild> list,
+            TextDefinition lowerText
+        )
+            : this(pm, g, NameComparer.Instance, ascending, filter, startNumber, GuildDisplayType.All, list, lowerText)
+        {
+        }
+
+        public GuildDiplomacyGump(
+            PlayerMobile pm, Guild g, IComparer<Guild> currentComparer, bool ascending, string filter,
+            int startNumber, GuildDisplayType display, List<Guild> list, TextDefinition lowerText
+        )
+            : base(
+                pm,
+                g,
+                list,
+                currentComparer,
+                ascending,
+                filter,
+                startNumber,
+                [
+                    new InfoField<Guild>(1062954, 280, NameComparer.Instance),  // Guild Name
+                    new InfoField<Guild>(1062957, 50, AbbrevComparer.Instance), // Abbrev
+                    new InfoField<Guild>(1062958, 120, new StatusComparer(g))   // Guild Title
+                ]
+            )
+        {
+            _display = display;
+            _lowerText = lowerText;
+        }
+
+        protected virtual bool AllowAdvancedSearch => true;
+
+        public override bool WillFilter
+        {
+            get
+            {
+                if (_display == GuildDisplayType.All)
+                {
+                    return base.WillFilter;
+                }
+
+                return true;
+            }
+        }
+
+        protected override void BuildListExtras(ref DynamicGumpBuilder builder)
+        {
+            builder.AddHtmlLocalized(431, 43, 110, 26, 1062978, 0xF); // Diplomacy
+        }
+
+        protected override TextDefinition[] GetValuesFor(Guild g, int aryLength)
+        {
+            var defs = new TextDefinition[aryLength];
+
+            defs[0] = g == Guild ? g.Name.Color(0x006600) : g.Name;
+            defs[1] = g.Abbreviation;
+
+            defs[2] = 3000085; // Peace
+
+            if (Guild.IsAlly(g))
+            {
+                if (Guild.Alliance.Leader == g)
+                {
+                    defs[2] = 1063237; // Alliance Leader
+                }
+                else
+                {
+                    defs[2] = 1062964; // Ally
+                }
+            }
+            else if (Guild.IsWar(g))
+            {
+                defs[2] = 3000086; // War
+            }
+
+            return defs;
+        }
+
+        public override bool HasRelationship(Guild g)
+        {
+            if (g == Guild)
+            {
+                return false;
+            }
+
+            if (Guild.FindPendingWar(g) != null)
+            {
+                return true;
+            }
+
+            var alliance = Guild.Alliance;
+
+            if (alliance != null)
+            {
+                var leader = alliance.Leader;
+
+                if (leader != null)
+                {
+                    if (Guild == leader && alliance.IsPendingMember(g) || g == leader && alliance.IsPendingMember(Guild))
+                    {
+                        return true;
+                    }
+                }
+                else if (alliance.IsPendingMember(g))
+                {
+                    return true;
+                }
+            }
+
+            return false;
+        }
+
+        protected override void DrawEndingEntry(ref DynamicGumpBuilder builder, int itemNumber)
+        {
+            if (_lowerText?.Number > 0)
+            {
+                builder.AddHtmlLocalized(66, 153 + itemNumber * 28, 280, 26, _lowerText.Number, 0xF);
+            }
+            else if (_lowerText?.String != null)
+            {
+                builder.AddHtml(66, 153 + itemNumber * 28, 280, 26, _lowerText.String.Color(0x99));
+            }
+
+            if (AllowAdvancedSearch)
+            {
+                builder.AddBackground(350, 148 + itemNumber * 28, 200, 26, 0x2486);
+                builder.AddButton(355, 153 + itemNumber * 28, 0x845, 0x846, 8);
+                builder.AddHtmlLocalized(380, 151 + itemNumber * 28, 160, 26, 1063083, 0x0); // Advanced Search
+            }
+        }
+
+        protected override bool IsFiltered(Guild g, string filter)
+        {
+            if (g == null)
+            {
+                return true;
+            }
+
+            switch (_display)
+            {
+                case GuildDisplayType.Relations:
+                    {
+                        // As per OSI, only the guild leader wars show up under the sorting by relation
+                        return !(Guild.FindActiveWar(g) != null || Guild.IsAlly(g));
+                    }
+                case GuildDisplayType.AwaitingAction:
+                    {
+                        return !HasRelationship(g);
+                    }
+            }
+
+            return !(g.Name.InsensitiveContains(filter) || g.Abbreviation.InsensitiveContains(filter));
+        }
+
+        public override BaseGump GetObjectInfoGump(PlayerMobile pm, Guild g, Guild o)
+        {
+            if (Guild == o)
+            {
+                return new GuildInfoGump(pm, g);
+            }
+
+            return new OtherGuildInfo(pm, g, o);
+        }
+
+        public override void OnResponse(NetState sender, in RelayInfo info)
+        {
+            base.OnResponse(sender, info);
+
+            if (sender.Mobile is not PlayerMobile pm || !IsMember(pm, Guild))
+            {
+                return;
+            }
+
+            if (AllowAdvancedSearch && info.ButtonID == 8)
+            {
+                pm.SendGump(new GuildAdvancedSearchGump(pm, Guild, _display, AdvancedSearch_Callback));
+            }
+        }
+
+        public void AdvancedSearch_Callback(GuildDisplayType display)
+        {
+            _display = display;
+            ResendGump();
+        }
+
+        private class NameComparer : IComparer<Guild>
+        {
+            public static readonly IComparer<Guild> Instance = new NameComparer();
+
+            public int Compare(Guild x, Guild y)
+            {
+                if (x == null && y == null)
+                {
+                    return 0;
+                }
+
+                if (x == null)
+                {
+                    return -1;
+                }
+
+                if (y == null)
+                {
+                    return 1;
+                }
+
+                return x.Name.InsensitiveCompare(y.Name);
+            }
+        }
+
+        private class StatusComparer : IComparer<Guild>
+        {
+            private readonly Guild _guild;
+
+            public StatusComparer(Guild g) => _guild = g;
+
+            public int Compare(Guild x, Guild y)
+            {
+                if (x == null && y == null)
+                {
+                    return 0;
+                }
+
+                if (x == null)
+                {
+                    return -1;
+                }
+
+                if (y == null)
+                {
+                    return 1;
+                }
+
+                var aStatus = GuildCompareStatus.Peace;
+                var bStatus = GuildCompareStatus.Peace;
+
+                if (_guild.IsAlly(x))
+                {
+                    aStatus = GuildCompareStatus.Ally;
+                }
+                else if (_guild.IsWar(x))
+                {
+                    aStatus = GuildCompareStatus.War;
+                }
+
+                if (_guild.IsAlly(y))
+                {
+                    bStatus = GuildCompareStatus.Ally;
+                }
+                else if (_guild.IsWar(y))
+                {
+                    bStatus = GuildCompareStatus.War;
+                }
+
+                return ((int)aStatus).CompareTo((int)bStatus);
+            }
+
+            private enum GuildCompareStatus
+            {
+                Peace,
+                Ally,
+                War
+            }
+        }
+
+        private class AbbrevComparer : IComparer<Guild>
+        {
+            public static readonly IComparer<Guild> Instance = new AbbrevComparer();
+
+            public int Compare(Guild x, Guild y)
+            {
+                if (x == null && y == null)
+                {
+                    return 0;
+                }
+
+                if (x == null)
+                {
+                    return -1;
+                }
+
+                if (y == null)
+                {
+                    return 1;
+                }
+
+                return x.Abbreviation.InsensitiveCompare(y.Abbreviation);
+            }
+        }
+    }
+}

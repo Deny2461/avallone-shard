@@ -1,0 +1,29 @@
+namespace Server.PathAlgorithms;
+
+public abstract class PathAlgorithm
+{
+    private static readonly Direction[] _calcDirections =
+    {
+        Direction.Up,
+        Direction.North,
+        Direction.Right,
+        Direction.West,
+        Direction.North,
+        Direction.East,
+        Direction.Left,
+        Direction.South,
+        Direction.Down
+    };
+
+    public abstract bool CheckCondition(Mobile m, Map map, Point3D start, Point3D goal);
+    public abstract Direction[] Find(Mobile m, Map map, Point3D start, Point3D goal);
+
+    public static Direction GetDirection(int xSource, int ySource, int xDest, int yDest)
+    {
+        var x = xDest + 1 - xSource;
+        var y = yDest + 1 - ySource;
+        var v = y * 3 + x;
+
+        return v is < 0 or >= 9 ? Direction.North : _calcDirections[v];
+    }
+}

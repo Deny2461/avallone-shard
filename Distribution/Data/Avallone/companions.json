@@ -1,0 +1,11 @@
+[
+  {
+    "key": "elspeth",
+    "type": "ElspethVale",
+    "map": "Trammel",
+    "x": 1475,
+    "y": 1613,
+    "z": 20,
+    "note": "placeholder spot beside Britain's healers (Vendors.json healer spawn 1471,1611,20). the owner adjusts with [move then [companion sethome elspeth."
+  }
+]

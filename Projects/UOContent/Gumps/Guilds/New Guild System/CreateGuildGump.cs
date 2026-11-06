@@ -1,0 +1,132 @@
+using Server.Gumps;
+using Server.Mobiles;
+using Server.Network;
+
+namespace Server.Guilds
+{
+    public class CreateGuildGump : DynamicGump
+    {
+        private readonly PlayerMobile _player;
+        private readonly string _guildName;
+        private readonly string _guildAbbrev;
+
+        public override bool Singleton => true;
+
+        public CreateGuildGump(PlayerMobile pm, string guildName = "Guild Name", string guildAbbrev = "") : base(10, 10)
+        {
+            _player = pm;
+            _guildName = guildName;
+            _guildAbbrev = guildAbbrev;
+
+            pm.CloseGump<BaseGuildGump>();
+        }
+
+        protected override void BuildLayout(ref DynamicGumpBuilder builder)
+        {
+            builder.AddPage();
+
+            builder.AddBackground(0, 0, 500, 300, 0x2422);
+            builder.AddHtmlLocalized(25, 20, 450, 25, 1062939, 0x0, true); // <center>GUILD MENU</center>
+
+            // As you are not a member of any guild, you can create your own by providing a unique guild name and
+            // paying the standard guild registration fee.
+            builder.AddHtmlLocalized(25, 60, 450, 60, 1062940, 0x0);
+
+            builder.AddHtmlLocalized(25, 135, 120, 25, 1062941, 0x0); // Registration Fee:
+            builder.AddLabel(155, 135, 0x481, $"{Guild.RegistrationFee}");
+            builder.AddHtmlLocalized(25, 165, 120, 25, 1011140, 0x0); // Enter Guild Name:
+            builder.AddBackground(155, 160, 320, 26, 0xBB8);
+            builder.AddTextEntry(160, 163, 315, 21, 0x481, 5, _guildName);
+            builder.AddHtmlLocalized(25, 191, 120, 26, 1063035, 0x0); // Abbreviation:
+            builder.AddBackground(155, 186, 320, 26, 0xBB8);
+            builder.AddTextEntry(160, 189, 315, 21, 0x481, 6, _guildAbbrev);
+            builder.AddButton(415, 217, 0xF7, 0xF8, 1);
+            builder.AddButton(345, 217, 0xF2, 0xF1, 0);
+
+            if (_player.AcceptGuildInvites)
+            {
+                builder.AddButton(20, 260, 0xD2, 0xD3, 2);
+            }
+            else
+            {
+                builder.AddButton(20, 260, 0xD3, 0xD2, 2);
+            }
+
+            builder.AddHtmlLocalized(45, 260, 200, 30, 1062943, 0x0); // <i>Ignore Guild Invites</i>
+        }
+
+        public override void OnResponse(NetState sender, in RelayInfo info)
+        {
+            if (sender.Mobile is not PlayerMobile { Guild: null } pm)
+            {
+                return; // Sanity
+            }
+
+            switch (info.ButtonID)
+            {
+                case 1:
+                    {
+                        var guildName = (info.GetTextEntry(5) ?? "").FixHtml();
+                        var guildAbbrev = (info.GetTextEntry(6) ?? "").FixHtml();
+
+                        if (guildName.Length <= 0)
+                        {
+                            pm.SendLocalizedMessage(1070884); // Guild name cannot be blank.
+                        }
+                        else if (guildAbbrev.Length <= 0)
+                        {
+                            pm.SendLocalizedMessage(1070885); // You must provide a guild abbreviation.
+                        }
+                        else if (guildName.Length > Guild.NameLimit)
+                        {
+                            // A guild name cannot be more than ~1_val~ characters in length.
+                            pm.SendLocalizedMessage(1063036, Guild.NameLimit.ToString());
+                        }
+                        else if (guildAbbrev.Length > Guild.AbbrevLimit)
+                        {
+                            // An abbreviation cannot exceed ~1_val~ characters in length.
+                            pm.SendLocalizedMessage(1063037, Guild.AbbrevLimit.ToString());
+                        }
+                        else if (BaseGuild.FindByAbbrev(guildAbbrev) != null || !BaseGuildGump.CheckProfanity(guildAbbrev))
+                        {
+                            pm.SendLocalizedMessage(501153); // That abbreviation is not available.
+                        }
+                        else if (BaseGuild.FindByName(guildName) != null || !BaseGuildGump.CheckProfanity(guildName))
+                        {
+                            pm.SendLocalizedMessage(1063000); // That guild name is not available.
+                        }
+                        else if (!Banker.Withdraw(pm, Guild.RegistrationFee))
+                        {
+                            // You do not possess the ~1_val~ gold piece fee required to create a guild.
+                            pm.SendLocalizedMessage(1063001, Guild.RegistrationFee.ToString());
+                        }
+                        else
+                        {
+                            // ~1_AMOUNT~ gold has been withdrawn from your bank box.
+                            pm.SendLocalizedMessage(1060398, Guild.RegistrationFee.ToString());
+
+                            pm.SendLocalizedMessage(1063238); // Your new guild has been founded.
+                            pm.Guild = new Guild(pm, guildName, guildAbbrev);
+                        }
+
+                        break;
+                    }
+                case 2:
+                    {
+                        pm.AcceptGuildInvites = !pm.AcceptGuildInvites;
+
+                        if (pm.AcceptGuildInvites)
+                        {
+                            pm.SendLocalizedMessage(1070699); // You are now accepting guild invitations.
+                        }
+                        else
+                        {
+                            pm.SendLocalizedMessage(1070698); // You are now ignoring guild invitations.
+                        }
+
+                        break;
+                    }
+            }
+        }
+    }
+}

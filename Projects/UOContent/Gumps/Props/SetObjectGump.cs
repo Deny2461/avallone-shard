@@ -1,0 +1,206 @@
+using System;
+using System.Reflection;
+using Server.Commands;
+using Server.Commands.Generic;
+using Server.Network;
+using Server.Prompts;
+
+using static Server.Gumps.PropsConfig;
+
+namespace Server.Gumps
+{
+    public class SetObjectGump : Gump
+    {
+        private const int EntryWidth = 212;
+
+        private const int TotalWidth = OffsetSize + EntryWidth + OffsetSize + SetWidth + OffsetSize;
+        private readonly Mobile m_Mobile;
+        private readonly object m_Object;
+        private readonly PropertyInfo m_Property;
+        private readonly Type m_Type;
+        private readonly PropertiesGump m_PropertiesGump;
+
+        public SetObjectGump(
+            PropertyInfo prop, Mobile mobile, object o, Type type, PropertiesGump propertiesGump
+        ) : base(GumpOffsetX, GumpOffsetY)
+        {
+            m_PropertiesGump = propertiesGump;
+            m_Property = prop;
+            m_Mobile = mobile;
+            m_Object = o;
+            m_Type = type;
+
+            var initialText = PropertiesGump.ValueToString(o, prop);
+
+            AddPage(0);
+
+            this.AddPropsFrame(TotalWidth, 5, out var x, out var y);
+            this.AddPropsEntryLabel(ref x, ref y, EntryWidth, prop.Name);
+            PropsLayout.NextRow(ref x, ref y);
+            this.AddPropsEntryButton(ref x, ref y, EntryWidth, initialText, true, 1);
+            PropsLayout.NextRow(ref x, ref y);
+            this.AddPropsEntryButton(ref x, ref y, EntryWidth, "Change by Serial", true, 2);
+            PropsLayout.NextRow(ref x, ref y);
+            this.AddPropsEntryButton(ref x, ref y, EntryWidth, "Nullify", true, 3);
+            PropsLayout.NextRow(ref x, ref y);
+            this.AddPropsEntryButton(ref x, ref y, EntryWidth, "View Properties", true, 4);
+        }
+
+        public override void OnResponse(NetState sender, in RelayInfo info)
+        {
+            var shouldSend = true;
+            object viewProps = null;
+
+            switch (info.ButtonID)
+            {
+                case 0: // closed
+                    {
+                        m_PropertiesGump.SendPropertiesGump();
+                        shouldSend = false;
+                        break;
+                    }
+                case 1: // Change by Target
+                    {
+                        m_Mobile.Target = new SetObjectTarget(
+                            m_Property,
+                            m_Mobile,
+                            m_Object,
+                            m_Type,
+                            m_PropertiesGump
+                        );
+                        shouldSend = false;
+                        break;
+                    }
+                case 2: // Change by Serial
+                    {
+                        shouldSend = false;
+
+                        m_Mobile.SendMessage("Enter the serial you wish to find:");
+                        m_Mobile.Prompt = new InternalPrompt(
+                            m_Property,
+                            m_Mobile,
+                            m_Object,
+                            m_Type,
+                            m_PropertiesGump
+                        );
+
+                        break;
+                    }
+                case 3: // Nullify
+                    {
+                        try
+                        {
+                            CommandLogging.LogChangeProperty(m_Mobile, m_Object, m_Property.Name, "(null)");
+                            m_Property.SetValue(m_Object, null, null);
+                            m_PropertiesGump.OnValueChanged(m_Object, m_Property);
+                        }
+                        catch
+                        {
+                            m_Mobile.SendMessage("An exception was caught. The property may not have changed.");
+                        }
+
+                        break;
+                    }
+                case 4: // View Properties
+                    {
+                        var obj = m_Property.GetValue(m_Object, null);
+
+                        if (obj == null)
+                        {
+                            m_Mobile.SendMessage("The property is null and so you cannot view its properties.");
+                        }
+                        else if (!BaseCommand.IsAccessible(m_Mobile, obj))
+                        {
+                            m_Mobile.SendMessage("You may not view their properties.");
+                        }
+                        else
+                        {
+                            viewProps = obj;
+                        }
+
+                        break;
+                    }
+            }
+
+            if (shouldSend)
+            {
+                m_Mobile.SendGump(new SetObjectGump(m_Property, m_Mobile, m_Object, m_Type, m_PropertiesGump));
+            }
+
+            if (viewProps != null)
+            {
+                m_Mobile.SendGump(new PropertiesGump(m_Mobile, viewProps));
+            }
+        }
+
+        private class InternalPrompt : Prompt
+        {
+            private readonly Mobile m_Mobile;
+            private readonly object m_Object;
+            private readonly PropertyInfo m_Property;
+            private readonly Type m_Type;
+            private readonly PropertiesGump m_PropertiesGump;
+
+            public InternalPrompt(
+                PropertyInfo prop, Mobile mobile, object o, Type type, PropertiesGump propertiesGump
+            )
+            {
+                m_PropertiesGump = propertiesGump;
+                m_Property = prop;
+                m_Mobile = mobile;
+                m_Object = o;
+                m_Type = type;
+            }
+
+            public override void OnCancel(Mobile from)
+            {
+                m_Mobile.SendGump(new SetObjectGump(m_Property, m_Mobile, m_Object, m_Type, m_PropertiesGump));
+            }
+
+            public override void OnResponse(Mobile from, string text)
+            {
+                try
+                {
+                    var serial = (Serial)Utility.ToUInt32(text);
+
+                    var toSet = World.FindEntity(serial);
+
+                    if (toSet == null)
+                    {
+                        m_Mobile.SendMessage("No object with that serial was found.");
+                    }
+                    else if (!m_Type.IsInstanceOfType(toSet))
+                    {
+                        m_Mobile.SendMessage(
+                            $"The object with that serial could not be assigned to a property of type : {m_Type.Name}"
+                        );
+                    }
+                    else
+                    {
+                        try
+                        {
+                            CommandLogging.LogChangeProperty(
+                                m_Mobile,
+                                m_Object,
+                                m_Property.Name,
+                                toSet.ToString()
+                            );
+                            m_Property.SetValue(m_Object, toSet, null);
+                            m_PropertiesGump.OnValueChanged(m_Object, m_Property);
+                        }
+                        catch
+                        {
+                            m_Mobile.SendMessage("An exception was caught. The property may not have changed.");
+                        }
+                    }
+                }
+                catch
+                {
+                    m_Mobile.SendMessage("Bad format");
+                }
+
+                m_Mobile.SendGump(new SetObjectGump(m_Property, m_Mobile, m_Object, m_Type, m_PropertiesGump));
+            }
+        }
+    }
+}

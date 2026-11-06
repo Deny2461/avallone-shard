@@ -1,0 +1,1209 @@
+/*************************************************************************
+ * ModernUO                                                              *
+ * Copyright 2019-2026 - ModernUO Development Team                       *
+ * Email: hi@modernuo.com                                                *
+ * File: BaseAI.cs                                                       *
+ *                                                                       *
+ * This program is free software: you can redistribute it and/or modify  *
+ * it under the terms of the GNU General Public License as published by  *
+ * the Free Software Foundation, either version 3 of the License, or     *
+ * (at your option) any later version.                                   *
+ *                                                                       *
+ * You should have received a copy of the GNU General Public License     *
+ * along with this program. If not, see <http://www.gnu.org/licenses/>.  *
+ ************************************************************************/
+
+using System;
+using Server.Engines.Quests.Necro;
+using Server.Engines.Spawners;
+using Server.Factions;
+using Server.Spells;
+using Server.Targets;
+
+namespace Server.Mobiles;
+
+public abstract partial class BaseAI
+{
+    // How far a guarding pet may drift from its master before it closes the gap.
+    internal const int GuardRange = 3;
+
+    // Last-known-position tracking: recorded while the combatant is in LOS; drives the
+    // guard-time investigation and the instant re-engage.
+    private const int GuardGraceDuration = 10_000;
+    private const int LkpFreshDuration = 30_000;
+    private const int InvestigateDuration = 15_000;
+
+    private ActionType _action;
+    public long _nextDetectHidden;
+    public DateTime _lastOrder = DateTime.MinValue;
+
+    private Mobile _lkpTarget;
+    private Point3D _lkpLocation;
+    private IPoint3D _lkpGoal; // boxed _lkpLocation handed to the PathFollower
+    private IPoint3D _herdGoal; // boxed herding goal handed to the PathFollower
+    private long _lkpExpireTick;
+    private long _guardStopTick;
+    private long _investigateStopTick;
+    private bool _investigating;
+
+    public PathFollower Path { get; protected set; }
+    public AITimer AITimer { get; }
+    public long NextMove { get; set; }
+
+    public BaseCreature Mobile { get; }
+
+    public long NextDebugMessage { get; set; }
+
+    public virtual bool CanDetectHidden => Mobile.Skills.DetectHidden.Value > 0;
+
+    public BaseAI(BaseCreature m)
+    {
+        Mobile = m;
+        NextMove = Core.TickCount;
+        AITimer = new AITimer(this);
+
+        if (!m.PlayerRangeSensitive || !World.Loading && m.Map != null && m.Map != Map.Internal && m.Map.GetSector(m.Location).Active)
+        {
+            AITimer.Activate();
+        }
+
+        if (Action != ActionType.Wander)
+        {
+            Action = ActionType.Wander;
+        }
+    }
+
+    public ActionType Action
+    {
+        get => _action;
+        set
+        {
+            if (_action != value)
+            {
+                _action = value;
+                OnActionChanged();
+            }
+        }
+    }
+
+    public virtual bool WasNamed(string speech) => !string.IsNullOrEmpty(Mobile.Name) && speech.InsensitiveStartsWith(Mobile.Name);
+
+    public virtual void BeginPickTarget(Mobile from, OrderType order)
+    {
+        if (!IsValidTarget(from, order))
+        {
+            return;
+        }
+
+        if (from.Target == null)
+        {
+            SendOrderMessage(from, order);
+            from.Target = new AIControlMobileTarget(this, order);
+        }
+        else if (from.Target is AIControlMobileTarget t && t.Order == order)
+        {
+            t.AddAI(this);
+        }
+    }
+
+    private static void SendOrderMessage(Mobile from, OrderType order)
+    {
+        switch (order)
+        {
+            case OrderType.Transfer:
+                {
+                    from.SendLocalizedMessage(502038);
+                    // Click on the person to transfer ownership to.
+                    break;
+                }
+            case OrderType.Friend:
+                {
+                    from.SendLocalizedMessage(502020);
+                    // Click on the player whom you wish to make a co-owner.
+                    break;
+                }
+            case OrderType.Unfriend:
+                {
+                    from.SendLocalizedMessage(1070948);
+                    // Click on the player whom you wish to remove as a co-owner.
+                    break;
+                }
+        }
+    }
+
+    /// <summary>
+    /// The retaliation policy: how the creature answers <paramref name="aggressor"/>. Returns false when it
+    /// stands down, and <see cref="BaseCreature.AggressiveAction"/> then skips its combat bookkeeping.
+    /// </summary>
+    public virtual bool OnAggressiveAction(Mobile aggressor)
+    {
+        if (Mobile.RefusesGuardTarget(aggressor))
+        {
+            DebugSay("Friendly fire; I keep guarding.");
+            return false;
+        }
+
+        // Only a creature somebody can command has been told anything; wild creatures rest on None.
+        var toldToStandDown = Mobile.ControlMaster != null && Mobile.Commandable &&
+                              IsStandDownOrder(Mobile.ControlOrder);
+
+        if (Mobile.StandsDownOnCommand && toldToStandDown)
+        {
+            DebugSay("I'm being attacked but my master told me not to fight.");
+            Mobile.Warmode = false;
+            return false;
+        }
+
+        PreferCloserAggressor(aggressor);
+
+        if (aggressor.ChangingCombatant && toldToStandDown)
+        {
+            // With stand-down off, a resting pet answers a direct attack with a full Attack order.
+            Mobile.IssueOrder(OrderType.Attack, null, aggressor);
+        }
+        else if (Mobile.Combatant == null && !Mobile.BardPacified)
+        {
+            Mobile.Warmode = true;
+            Mobile.Combatant = aggressor;
+        }
+
+        return true;
+    }
+
+    // A visible aggressor closer than the current combatant takes over.
+    protected void PreferCloserAggressor(Mobile aggressor)
+    {
+        if (aggressor.Hidden)
+        {
+            return;
+        }
+
+        var current = Mobile.Combatant;
+
+        if (current != null && current != aggressor &&
+            Mobile.GetDistanceToSqrt(aggressor) < Mobile.GetDistanceToSqrt(current))
+        {
+            Mobile.Combatant = aggressor;
+        }
+    }
+
+    public virtual void EndPickTarget(Mobile from, Mobile target, OrderType order)
+    {
+        if (!IsValidTarget(from, order) || order == OrderType.Attack && !CanAttackTarget(from, target))
+        {
+            return;
+        }
+
+        if (Mobile.CheckControlChance(from))
+        {
+            Mobile.IssueOrder(order, from, target);
+        }
+    }
+
+    private bool IsValidTarget(Mobile from, OrderType order)
+    {
+        if (Mobile.Deleted || !Mobile.Controlled || !from.InRange(Mobile, 14)
+            || from.Map != Mobile.Map || !from.CheckAlive())
+        {
+            return false;
+        }
+
+        var isOwner = from == Mobile.ControlMaster;
+        var isFriend = !isOwner && Mobile.IsPetFriend(from);
+
+        if (!isOwner && !isFriend)
+        {
+            return false;
+        }
+
+        if (isFriend && !IsFriendOrder(order))
+        {
+            return false;
+        }
+
+        return true;
+    }
+
+    private bool CanAttackTarget(Mobile from, Mobile target)
+    {
+        if (target.Hidden)
+        {
+            return false;
+        }
+
+        if (target is BaseCreature creature && creature.IsScaryToPets && Mobile.IsScaredOfScaryThings)
+        {
+            Mobile.SayTo(from, "Your pet refuses to attack this creature!");
+            return false;
+        }
+
+        if (SolenHelper.CheckRedFriendship(from) &&
+            target is RedSolenInfiltratorQueen or RedSolenInfiltratorWarrior or RedSolenQueen or RedSolenWarrior or RedSolenWorker ||
+            SolenHelper.CheckBlackFriendship(from) &&
+            target is BlackSolenInfiltratorQueen or BlackSolenInfiltratorWarrior or BlackSolenQueen or BlackSolenWarrior or BlackSolenWorker)
+        {
+            from.SendLocalizedMessage(1063106);
+            // You can not force your pet to attack a creature you are protected from.
+            return false;
+        }
+
+        if (target is BaseFactionGuard)
+        {
+            Mobile.SayTo(from, "Your pet refuses to attack the guard.");
+            return false;
+        }
+
+        return true;
+    }
+
+    public void DebugSay(string message, int cooldownMs = 5000)
+    {
+        if (Mobile.Debug && NextDebugMessage - Core.TickCount <= 0)
+        {
+            Mobile.PublicOverheadMessage(MessageType.Regular, 41, false, message);
+            NextDebugMessage = Core.TickCount + cooldownMs;
+        }
+    }
+
+    public virtual bool Think()
+    {
+        if (Mobile.Deleted || Mobile.Map == null)
+        {
+            return false;
+        }
+
+        if (CheckFlee())
+        {
+            return true;
+        }
+
+        if (_action == ActionType.Combat)
+        {
+            UpdateLastKnownLocation();
+        }
+        else if (_action is ActionType.Wander or ActionType.Guard)
+        {
+            TryReengageLastKnown();
+        }
+
+        switch (Action)
+        {
+            case ActionType.Wander:
+                {
+                    Mobile.OnActionWander();
+                    return DoActionWander();
+                }
+            case ActionType.Combat:
+                {
+                    Mobile.OnActionCombat();
+                    return DoActionCombat();
+                }
+            case ActionType.Guard:
+                {
+                    Mobile.OnActionGuard();
+                    return DoActionGuard();
+                }
+            case ActionType.Flee:
+                {
+                    Mobile.OnActionFlee();
+                    return DoActionFlee();
+                }
+            case ActionType.Interact:
+                {
+                    Mobile.OnActionInteract();
+                    return DoActionInteract();
+                }
+            case ActionType.Backoff:
+                {
+                    Mobile.OnActionBackoff();
+                    return DoActionBackoff();
+                }
+        }
+
+        return false;
+    }
+
+    public virtual void OnActionChanged()
+    {
+        // A change of course invalidates between-think movement continuation.
+        ClearMoveIntent();
+
+        switch (Action)
+        {
+            case ActionType.Wander:
+                {
+                    HandleWanderAction();
+                    break;
+                }
+            case ActionType.Combat:
+                {
+                    HandleCombatAction();
+                    break;
+                }
+            case ActionType.Guard:
+                {
+                    HandleGuardAction();
+                    break;
+                }
+            case ActionType.Flee:
+                {
+                    HandleFleeAction();
+                    break;
+                }
+            case ActionType.Interact:
+                {
+                    HandleInteractAction();
+                    break;
+                }
+            case ActionType.Backoff:
+                {
+                    HandleBackoffAction();
+                    break;
+                }
+        }
+    }
+
+    private void HandleWanderAction()
+    {
+        Mobile.FocusMob = null;
+        Mobile.Warmode = false;
+        Mobile.Combatant = null;
+    }
+
+    private void HandleCombatAction()
+    {
+        Mobile.Warmode = true;
+    }
+
+    private void HandleGuardAction()
+    {
+        Mobile.Warmode = true;
+        Mobile.Combatant = null;
+
+        // Investigate a fresh last-seen position that is not already in view; the guard
+        // grace period begins once the investigation ends.
+        _investigating = _lkpTarget != null && Core.TickCount - _lkpExpireTick < 0 &&
+                         !(Mobile.InRange(_lkpLocation, 1) ||
+                           Mobile.InLOS(_lkpLocation) && Mobile.InRange(_lkpLocation, Mobile.RangePerception));
+        _investigateStopTick = Core.TickCount + InvestigateDuration;
+        _guardStopTick = Core.TickCount + GuardGraceDuration;
+        _lkpGoal = null;
+    }
+
+    private void HandleFleeAction()
+    {
+        Mobile.FocusMob = null;
+        Mobile.Warmode = true;
+    }
+
+    private void HandleInteractAction()
+    {
+        Mobile.Warmode = false;
+    }
+
+    private void HandleBackoffAction()
+    {
+        Mobile.Warmode = false;
+    }
+
+    public virtual bool DoActionWander()
+    {
+        if (CheckHerding())
+        {
+            this.DebugSayFormatted($"I am being herded by {Mobile.ControlTarget?.Name ?? "Unknown"}.");
+        }
+        else if (ShouldBackoff())
+        {
+            DebugSay("Detected threat, backing off!");
+
+            Action = ActionType.Backoff;
+            return true;
+        }
+        else if (Mobile.CurrentWayPoint != null)
+        {
+            HandleWayPoint();
+        }
+        else if (Mobile.IsAnimatedDead)
+        {
+            FollowMaster();
+
+            if (CheckMove() && CanMoveNow(out _) && !Mobile.CheckIdle())
+            {
+                WalkRandomInHome(3, 2, 1);
+            }
+        }
+        else if (CheckMove() && CanMoveNow(out _) && !Mobile.CheckIdle())
+        {
+            WalkRandomInHome(3, 2, 1);
+        }
+
+        return true;
+    }
+
+    public virtual bool OnAtWayPoint() => true;
+
+    private void HandleWayPoint()
+    {
+        var point = Mobile.CurrentWayPoint;
+
+        if ((point.X != Mobile.Location.X || point.Y != Mobile.Location.Y)
+            && point.Map == Mobile.Map && point.Parent == null && !point.Deleted)
+        {
+            this.DebugSayFormatted($"Moving towards waypoint {point.X}, {point.Y}.");
+
+            DoMove(Mobile.GetDirectionTo(point));
+        }
+        else if (OnAtWayPoint())
+        {
+            this.DebugSayFormatted($"I have reached waypoint {point.X}, {point.Y}.");
+
+            Mobile.CurrentWayPoint = point.NextPoint;
+            if (point.NextPoint?.Deleted == true)
+            {
+                Mobile.CurrentWayPoint = point.NextPoint = point.NextPoint.NextPoint;
+            }
+        }
+    }
+
+    private void FollowMaster()
+    {
+        var master = Mobile.SummonMaster;
+        if (master != null && master.Map == Mobile.Map && master.InRange(Mobile, Mobile.RangePerception))
+        {
+            MoveTo(master, 1);
+        }
+    }
+
+    public virtual bool DoActionCombat()
+    {
+        if (Core.AOS && CheckHerding())
+        {
+            this.DebugSayFormatted($"I am being herded by {Mobile.ControlTarget?.Name ?? "Unknown"}.");
+            return true;
+        }
+
+        var combatant = Mobile.Combatant;
+        if (!IsValidCombatant(combatant))
+        {
+            DebugSay("My combatant is missing. Wandering...");
+
+            Mobile.FocusMob = null;
+            Mobile.Warmode = false;
+            Mobile.Combatant = null;
+
+            Action = ActionType.Wander;
+            return true;
+        }
+
+        if (Mobile.TriggerAbility(MonsterAbilityTrigger.CombatAction, combatant))
+        {
+            this.DebugSayFormatted($"I used my abilities on {combatant.Name}!");
+        }
+
+        return true;
+    }
+
+    public bool IsValidCombatant(Mobile combatant) => IsValidFocusMob(combatant)
+        && (Mobile.InLOS(combatant) || IsHostile(combatant));
+
+    public bool IsValidFocusMob(Mobile focusMob) =>
+        focusMob != null
+        && !focusMob.Deleted
+        && focusMob.Map == Mobile.Map
+        && focusMob.Alive
+        && (focusMob is not BaseCreature bc || !bc.IsDeadPet)
+        && focusMob.AccessLevel == AccessLevel.Player
+        && Mobile.CanSee(focusMob)
+        && Mobile.InRange(focusMob, Mobile.RangePerception);
+
+    public virtual bool DoActionGuard()
+    {
+        if (_investigating)
+        {
+            if (InvestigateLastKnown())
+            {
+                return true;
+            }
+
+            _investigating = false;
+            _guardStopTick = Core.TickCount + GuardGraceDuration;
+        }
+
+        if (Core.TickCount - _guardStopTick < 0)
+        {
+            DebugSay("I am on guard.");
+
+            if (Utility.Random(8) == 0)
+            {
+                Mobile.Direction = (Direction)Utility.Random(8);
+            }
+
+            return true;
+        }
+
+        DebugSay("I stopped being on guard. Going home...");
+        Action = ActionType.Wander;
+
+        return true;
+    }
+
+    /// <summary>
+    /// Records the combatant's position while it is visible and in line of sight.
+    /// </summary>
+    private void UpdateLastKnownLocation()
+    {
+        var combatant = Mobile.Combatant;
+
+        if (combatant?.Deleted == false && combatant.Map == Mobile.Map &&
+            Mobile.CanSee(combatant) && Mobile.InLOS(combatant))
+        {
+            _lkpTarget = combatant;
+            _lkpLocation = combatant.Location;
+            _lkpExpireTick = Core.TickCount + LkpFreshDuration;
+        }
+    }
+
+    /// <summary>
+    /// Re-engages the last-seen target when it returns to view within perception range,
+    /// bypassing the reacquire throttle.
+    /// </summary>
+    private bool TryReengageLastKnown()
+    {
+        var target = _lkpTarget;
+
+        if (target == null)
+        {
+            return false;
+        }
+
+        if (target.Deleted || !target.Alive || target.Map != Mobile.Map ||
+            target is BaseCreature { IsDeadPet: true } || Core.TickCount - _lkpExpireTick >= 0)
+        {
+            ClearLastKnown();
+            return false;
+        }
+
+        if (Mobile.Controlled || Mobile.BardPacified || Mobile.BardProvoked || Mobile.FightMode == FightMode.None)
+        {
+            return false;
+        }
+
+        if (!Mobile.InRange(target, Mobile.RangePerception) || !Mobile.CanSee(target) ||
+            !Mobile.InLOS(target) || !Mobile.CanBeHarmful(target, false))
+        {
+            return false;
+        }
+
+        DebugSay("There you are!");
+        Mobile.Combatant = target;
+        Mobile.FocusMob = null;
+        Action = ActionType.Combat;
+        return true;
+    }
+
+    /// <summary>
+    /// Walks toward the last-seen position until it is in view, reached, timed out, or
+    /// unreachable. Returns false when the investigation is finished.
+    /// </summary>
+    private bool InvestigateLastKnown()
+    {
+        if (_lkpTarget == null || Core.TickCount - _investigateStopTick >= 0)
+        {
+            return false;
+        }
+
+        if (Mobile.InRange(_lkpLocation, 1) ||
+            Mobile.InLOS(_lkpLocation) && Mobile.InRange(_lkpLocation, Mobile.RangePerception))
+        {
+            DebugSay("They truly disappeared...");
+            return false;
+        }
+
+        _lkpGoal ??= _lkpLocation;
+        return MoveToPoint(_lkpGoal);
+    }
+
+    private void ClearLastKnown()
+    {
+        _lkpTarget = null;
+        _lkpGoal = null;
+        _investigating = false;
+    }
+
+    public virtual bool DoActionFlee()
+    {
+        var from = Mobile.Combatant;
+
+        if (!IsValidCombatant(from))
+        {
+            DebugSay("Combatant is missing.");
+
+            WalkRandomInHome(3, 2, 1);
+            return true;
+        }
+
+        DebugSay("I am fleeing!");
+
+        DoMove(from.GetDirectionTo(Mobile));
+        return true;
+    }
+
+    public virtual bool DoActionInteract() => true;
+
+    public virtual bool CheckHerding()
+    {
+        var target = Mobile.TargetLocation;
+
+        if (target == null)
+        {
+            _herdGoal = null;
+            return false;
+        }
+
+        var distance = Mobile.GetDistanceToSqrt(target);
+
+        if (distance >= 1 && distance <= 15)
+        {
+            // A cached boxed goal keeps the PathFollower persistent across ticks; walking
+            // through MoveToPoint paces herding on the movement clock and paths around
+            // obstacles. Range 0: the exit below is distance < 1.
+            if (_herdGoal == null || _herdGoal.X != target.X || _herdGoal.Y != target.Y)
+            {
+                _herdGoal = new Point3D(target.X, target.Y, Mobile.Map?.GetAverageZ(target.X, target.Y) ?? Mobile.Z);
+            }
+
+            MoveToPoint(_herdGoal, 0);
+            return true;
+        }
+
+        if (distance < 1 && IsSpecialHerdingCase(target))
+        {
+            HandleSpecialHerdingCase();
+        }
+
+        Mobile.TargetLocation = null;
+        _herdGoal = null;
+        return false;
+    }
+
+    private bool IsSpecialHerdingCase(IPoint2D target) => target.X == 1076 && target.Y == 450 && Mobile is HordeMinionFamiliar;
+
+    private void HandleSpecialHerdingCase()
+    {
+        if (Mobile.ControlMaster is PlayerMobile pm && pm.Quest is DarkTidesQuest qs)
+        {
+            var obj = qs.FindObjective<FetchAbraxusScrollObjective>();
+
+            if (obj?.Completed == false)
+            {
+                Mobile.AddToBackpack(new ScrollOfAbraxus());
+                obj.Complete();
+            }
+        }
+    }
+
+    public virtual void DoBardPacified()
+    {
+        if (Core.Now < Mobile.BardEndTime)
+        {
+            DebugSay("I am pacified. Can not fight.");
+
+            Mobile.Warmode = false;
+            Mobile.Combatant = null;
+        }
+        else
+        {
+            DebugSay("I am free from pacification.");
+
+            Mobile.BardPacified = false;
+        }
+    }
+
+    public virtual void DoBardProvoked()
+    {
+        if (Core.Now >= Mobile.BardEndTime && IsProvokerLost())
+        {
+            DebugSay("Provoker missing.");
+
+            Mobile.BardProvoked = false;
+            Mobile.BardMaster = null;
+            Mobile.BardTarget = null;
+            Mobile.Warmode = false;
+            Mobile.Combatant = null;
+        }
+        else if (IsProvokeTargetLost())
+        {
+            DebugSay("Provoke target missing.");
+
+            Mobile.BardProvoked = false;
+            Mobile.BardMaster = null;
+            Mobile.BardTarget = null;
+            Mobile.Warmode = false;
+            Mobile.Combatant = null;
+        }
+        else
+        {
+            Mobile.Combatant = Mobile.BardTarget;
+            Action = ActionType.Combat;
+        }
+    }
+
+    private bool IsProvokerLost() =>
+        Mobile.BardMaster?.Deleted != false
+        || Mobile.BardMaster.Map != Mobile.Map
+        || Mobile.GetDistanceToSqrt(Mobile.BardMaster) > Mobile.RangePerception;
+
+    private bool IsProvokeTargetLost() =>
+        Mobile.BardTarget?.Deleted != false
+        || Mobile.BardTarget.Map != Mobile.Map
+        || Mobile.GetDistanceToSqrt(Mobile.BardTarget) > Mobile.RangePerception;
+
+    public virtual double FleeHealthThreshold => 0.0;
+    public virtual double FleeChance => 0.0;
+
+    public virtual bool CheckFlee()
+    {
+        if (Mobile.CheckFlee())
+        {
+            if (Mobile.Combatant == null)
+            {
+                Action = ActionType.Wander;
+                return false;
+            }
+
+            Action = ActionType.Flee;
+            return true;
+        }
+
+        if (StartFlee())
+        {
+            var duration = TimeSpan.FromSeconds(Utility.Random(10, 30));
+            Mobile.BeginFlee(duration);
+
+            Action = ActionType.Flee;
+
+            return true;
+        }
+
+        return false;
+    }
+
+    protected virtual bool StartFlee()
+    {
+        if (!Mobile.CanFlee)
+        {
+            return false;
+        }
+
+        var hitPercent = (double)Mobile.Hits / Mobile.HitsMax;
+
+        if (hitPercent > FleeHealthThreshold)
+        {
+            return false;
+        }
+
+        return Utility.RandomDouble() < FleeChance;
+    }
+
+    public virtual double BackoffChance => 0.0;
+
+    protected virtual bool ShouldBackoff()
+    {
+        if (Mobile.Combatant != null || BackoffChance <= 0.0)
+        {
+            return false;
+        }
+
+        if (AcquireFocusMob(Mobile.RangePerception, Mobile.FightMode, false, false, true))
+        {
+            return Utility.RandomDouble() < BackoffChance;
+        }
+
+        return false;
+    }
+
+    public virtual bool DoActionBackoff()
+    {
+        if (AcquireFocusMob(Mobile.RangePerception * 2, FightMode.Closest, true, false, true))
+        {
+            if (WalkMobileRange(Mobile.FocusMob, 1, Mobile.RangePerception, Mobile.RangePerception * 2))
+            {
+                DebugSay("I backed off to safety. Wandering...");
+
+                Action = ActionType.Wander;
+            }
+        }
+        else
+        {
+            DebugSay("Focus target missing. Wandering...");
+
+            Action = ActionType.Wander;
+        }
+
+        return true;
+    }
+
+    public virtual void OnTeleported()
+    {
+        DebugSay("Teleported; recalculating path...");
+
+        Path?.ForceRepath();
+    }
+
+    public virtual bool AcquireFocusMob(int iRange, FightMode acqType, bool bPlayerOnly, bool bFacFriend, bool bFacFoe)
+    {
+        if (Mobile.Deleted || Mobile.Map == null)
+        {
+            return false;
+        }
+
+        if (Mobile.BardPacified)
+        {
+            return false;
+        }
+
+        if (HandleBardProvoked())
+        {
+            return true;
+        }
+
+        // A controlled creature must not fall through to wild target selection when
+        // its order has no target. Guard in particular normally has no ControlTarget.
+        if (Mobile.Controlled)
+        {
+            return HandleControlled();
+        }
+
+        if (HandleConstantFocus())
+        {
+            return true;
+        }
+
+        if (acqType == FightMode.None)
+        {
+            Mobile.FocusMob = null;
+            return false;
+        }
+
+        if (HandleAggressor(acqType))
+        {
+            return false;
+        }
+
+        var reacquireDelay = (long)Mobile.ReacquireDelay.TotalMilliseconds;
+        var gateRemaining = Mobile.NextReacquireTime - Core.TickCount;
+
+        if (gateRemaining > 0 && gateRemaining <= reacquireDelay)
+        {
+            Mobile.FocusMob = null;
+            return false;
+        }
+
+        DebugSay("Acquiring new target...", 0);
+
+        var acquired = AcquireNewFocusMob(Mobile.Map, iRange, acqType, bPlayerOnly, bFacFriend, bFacFoe);
+
+        // Reaction time is the approach path (BaseCreature.ScheduleAcquireOnApproach),
+        // not this poll — every scan honors the full delay.
+        Mobile.NextReacquireTime = Core.TickCount + reacquireDelay;
+
+        return acquired;
+    }
+
+    private bool HandleBardProvoked()
+    {
+        if (!Mobile.BardProvoked)
+        {
+            return false;
+        }
+
+        if (Mobile.BardTarget?.Deleted != false)
+        {
+            Mobile.FocusMob = null;
+            return false;
+        }
+
+        Mobile.FocusMob = Mobile.BardTarget;
+        return true;
+    }
+
+    private bool HandleControlled()
+    {
+        if (Mobile.ControlOrder == OrderType.Guard)
+        {
+            Mobile.FocusMob = FindGuardTarget();
+            return Mobile.FocusMob != null;
+        }
+
+        // Follow and other non-combat orders may target the owner or a friend.
+        // Only an explicit attack order supplies a combat target.
+        if (Mobile.ControlOrder != OrderType.Attack)
+        {
+            Mobile.FocusMob = null;
+            return false;
+        }
+
+        if (Mobile.ControlTarget?.Deleted == false &&
+            Mobile.ControlTarget?.Hidden != true &&
+            Mobile.ControlTarget?.Alive == true &&
+            Mobile.ControlTarget?.IsDeadBondedPet != true &&
+            Mobile.InRange(Mobile.ControlTarget, Mobile.RangePerception * 2))
+        {
+            Mobile.FocusMob = Mobile.ControlTarget;
+            return true;
+        }
+
+        if (Mobile.ControlTarget != null && Mobile.ControlTarget != Mobile.ControlMaster)
+        {
+            Mobile.ControlTarget = null;
+        }
+
+        Mobile.FocusMob = null;
+        return false;
+    }
+
+    private bool HandleConstantFocus()
+    {
+        if (Mobile.ConstantFocus == null)
+        {
+            return false;
+        }
+
+        this.DebugSayFormatted($"Acquired focused target: {Mobile.ConstantFocus.Name}.");
+
+        Mobile.FocusMob = Mobile.ConstantFocus;
+        return true;
+    }
+
+    private bool HandleAggressor(FightMode acqType)
+    {
+        if (acqType != FightMode.Aggressor ||
+            Mobile.Aggressors.Count > 0 ||
+            Mobile.Aggressed.Count > 0 ||
+            Mobile.FactionAllegiance != null ||
+            Mobile.EthicAllegiance != null)
+        {
+            return false;
+        }
+
+        Mobile.FocusMob = null;
+        return true;
+    }
+
+    private bool AcquireNewFocusMob(Map map, int iRange, FightMode acqType, bool bPlayerOnly, bool bFacFriend, bool bFacFoe)
+    {
+        Mobile newFocusMob = null;
+        Mobile enemySummonMob = null;
+        var val = double.MinValue;
+        var enemySummonVal = double.MinValue;
+        Mobile summonMaster = null;
+
+        foreach (var m in map.GetMobilesInRange(Mobile.Location, iRange))
+        {
+            if (IsInvalidTarget(m, bPlayerOnly))
+            {
+                continue;
+            }
+
+            var bc = m as BaseCreature;
+
+            if (IsInvalidSummonTarget(m, bc) || IsInvalidFactionTarget(m, bFacFriend, bFacFoe)
+                                             || IsInvalidFightModeTarget(m, acqType, bc))
+            {
+                continue;
+            }
+
+            // Only a summon that ignores the acquire rules gets here with its caster; anyone else comes first.
+            if (m == Mobile.SummonMaster)
+            {
+                if (Mobile.InLOS(m))
+                {
+                    summonMaster = m;
+                }
+
+                continue;
+            }
+
+            var theirVal = Mobile.GetFightModeRanking(m, acqType, bPlayerOnly);
+
+            if (theirVal > val && Mobile.InLOS(m))
+            {
+                newFocusMob = m;
+                val = theirVal;
+            }
+            else if (Core.AOS && theirVal > enemySummonVal && Mobile.InLOS(m) && bc is { Summoned: true, Controlled: false })
+            {
+                enemySummonMob = m;
+                enemySummonVal = theirVal;
+            }
+        }
+
+        Mobile.FocusMob = newFocusMob ?? enemySummonMob ?? summonMaster;
+        return Mobile.FocusMob != null;
+    }
+
+    private bool IsInvalidTarget(Mobile m, bool bPlayerOnly) =>
+        m.Deleted || m.Blessed || m == Mobile || m is BaseFamiliar || !m.Alive || m.IsDeadBondedPet ||
+        m.AccessLevel > AccessLevel.Player || bPlayerOnly && !m.Player || !Mobile.CanSee(m);
+
+    private bool IsInvalidSummonTarget(Mobile m, BaseCreature bc)
+    {
+        // A summon whose caster was deleted before a reload comes back with no master.
+        if (Core.AOS &&
+            (bc?.SummonMaster == Mobile || bc?.SummonMaster is { Player: false } summonMaster && IsHostile(summonMaster)))
+        {
+            return true;
+        }
+
+        var master = Mobile.SummonMaster;
+
+        if (master == null)
+        {
+            return false;
+        }
+
+        if (Mobile.IsAnimatedDead && (m.Player || bc?.IsAnimatedDead == true || bc?.Controlled == true))
+        {
+            return true;
+        }
+
+        return Mobile.FollowsAcquireRules && (m == master || !SpellHelper.ValidIndirectTarget(master, m));
+    }
+
+    private bool IsInvalidFactionTarget(Mobile m, bool bFacFriend, bool bFacFoe) =>
+        bFacFriend && !Mobile.IsFriend(m) ||
+        bFacFoe && (!Mobile.IsEnemy(m) || !bFacFriend && !Mobile.CanBeHarmful(m, false));
+
+    private bool IsInvalidFightModeTarget(Mobile m, FightMode acqType, BaseCreature bc)
+    {
+        if (acqType is not (FightMode.Aggressor or FightMode.Evil))
+        {
+            return false;
+        }
+
+        var valid = IsHostile(m) || Mobile.GetFactionAllegiance(m) == BaseCreature.Allegiance.Enemy
+                                 || Mobile.GetEthicAllegiance(m) == BaseCreature.Allegiance.Enemy;
+
+        // Valid if FightMode is Evil and the target's karma is negative
+        return !valid && (acqType != FightMode.Evil || (bc?.GetMaster()?.Karma ?? m.Karma) >= 0);
+    }
+
+    private bool IsHostile(Mobile from) =>
+        Mobile.Combatant == from || from.Combatant == Mobile || IsAggressor(from) || IsAggressed(from);
+
+    private bool IsAggressor(Mobile from)
+    {
+        foreach (var aggressor in Mobile.Aggressors)
+        {
+            if (aggressor.Defender == from)
+            {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private bool IsAggressed(Mobile from)
+    {
+        foreach (var aggressed in Mobile.Aggressed)
+        {
+            if (aggressed.Attacker == from)
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    public virtual void DetectHidden()
+    {
+        if (Mobile.Deleted || Mobile.Map == null || !CanDetectHidden)
+        {
+            return;
+        }
+
+        DebugSay("Checking for hidden entities...");
+
+        var srcSkill = Mobile.Skills.DetectHidden.Value;
+
+        if (srcSkill <= 0)
+        {
+            return;
+        }
+
+        foreach (var trg in Mobile.GetMobilesInRange(Mobile.RangePerception))
+        {
+            if (IsValidTargetCombatTarget(trg))
+            {
+                TryDetectHidden(trg, srcSkill);
+            }
+        }
+    }
+
+    private bool IsValidTargetCombatTarget(Mobile trg) => trg != Mobile && trg.Player && trg.Alive && trg.Hidden &&
+                                                          trg.AccessLevel == AccessLevel.Player && Mobile.InLOS(trg);
+
+    private void TryDetectHidden(Mobile trg, double srcSkill)
+    {
+        this.DebugSayFormatted($"Trying to detect: {trg.Name}");
+
+        var trgHiding = trg.Skills.Hiding.Value / 2.9;
+        var trgStealth = trg.Skills.Stealth.Value / 1.8;
+        var chance = Math.Max(srcSkill / 10, srcSkill / 1.2 - Math.Min(trgHiding, trgStealth)) / 100;
+
+        if (chance > Utility.RandomDouble())
+        {
+            trg.RevealingAction();
+            trg.SendLocalizedMessage(500814);
+            // You have been revealed!
+        }
+    }
+
+    public virtual void Deactivate()
+    {
+        if (Mobile.Map == null || Mobile.Map == Map.Internal || !Mobile.Controlled && !Mobile.Map.GetSector(Mobile.Location).Active)
+        {
+            AITimer.Stop();
+        }
+
+        if (ShouldReturnToHome(Mobile.Spawner))
+        {
+            Timer.StartTimer(ReturnToHome);
+        }
+    }
+
+    private bool ShouldReturnToHome(ISpawner spawner) =>
+        spawner?.ReturnOnDeactivate == true && !Mobile.Controlled &&
+        !spawner.IsInSpawnBounds(Mobile.Location);
+
+    private void ReturnToHome()
+    {
+        if (Mobile.Spawner is not Spawner spawner)
+        {
+            return;
+        }
+
+        var loc = spawner.GetSpawnPosition(Mobile, spawner.Map);
+
+        if (loc != Point3D.Zero)
+        {
+            Mobile.MoveToWorld(loc, spawner.Map);
+        }
+
+        Activate();
+    }
+
+    public virtual void Activate()
+    {
+        if (!AITimer.Running)
+        {
+            AITimer.Activate();
+        }
+    }
+
+    public virtual void OnCurrentSpeedChanged()
+    {
+        AITimer.OnSpeedChanged();
+    }
+}

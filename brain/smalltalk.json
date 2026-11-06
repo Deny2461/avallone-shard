@@ -1,0 +1,40 @@
+{
+  "_doc": "SAMPLE small talk - the real pool (a few hundred lines) is not published. Made-up local chatter for 'what news' when no live deed is told. One line is picked per reply and the NPC tells it in their own words. {town} = the NPC's town, {near} = a neighbouring town. No named people; gender-neutral wording.",
+  "share": 0.65,
+  "town_share": 0.3,
+  "any": [
+    "the price of bread in {town} went up again this week",
+    "a cart lost a wheel on the road to {near} and nobody has fixed the rut",
+    "folk say the winter will come early this year",
+    "someone saw lights out on the water past {town} last night",
+    "the well by the market tastes of iron lately",
+    "a travelling tinker passed through, selling pots that leak",
+    "the roads to {near} are muddy after the rain",
+    "two merchants nearly came to blows over a bolt of cloth",
+    "the bells rang late for no reason anyone can name",
+    "a flock of crows has settled on the old mill"
+  ],
+  "towns": {
+    "Britain": [
+      "the castle guard changed its watch hours again",
+      "the bakers on the west side are feuding over a recipe"
+    ],
+    "Minoc": [
+      "the miners struck a seam of something shiny, or so they claim",
+      "the tinkers are short of good iron"
+    ],
+    "Yew": [
+      "the woodcutters found wolf tracks near the abbey",
+      "the abbey's wine is said to be better than last year's"
+    ],
+    "Trinsic": [
+      "the paladins are drilling on the green every morning"
+    ],
+    "Vesper": [
+      "a barge ran aground under the east bridge"
+    ],
+    "Zento": [
+      "the tea house by the bridge has a new kettle and is very proud of it"
+    ]
+  }
+}

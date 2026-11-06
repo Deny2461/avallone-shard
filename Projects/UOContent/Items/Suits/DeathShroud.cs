@@ -1,0 +1,12 @@
+using ModernUO.Serialization;
+
+namespace Server.Items;
+
+[SerializationGenerator(0, false)]
+public partial class DeathShroud : BaseSuit
+{
+    [Constructible]
+    public DeathShroud() : base(AccessLevel.GameMaster, 0x0, 0x204E)
+    {
+    }
+}

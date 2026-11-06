@@ -1,0 +1,48 @@
+"""Risky-claim patterns (2026-11-04 26b tuning; Codex round 2 F5). `mood.excuse` is what the respond handler uses to
+retry and then cut a sentence - service answers, advice and denials must pass it untouched. Run: python3 test_risky_patterns.py"""
+import json
+import os
+import sys
+import tempfile
+import unittest
+
+_d = tempfile.TemporaryDirectory()
+with open(os.path.join(_d.name, "c.json"), "w") as f:
+    json.dump({"memory_db": os.path.join(_d.name, "x.db"), "secrets_dir": _d.name, "quiet_windows": [],
+               "reflection_mode": "off", "lore_dir": _d.name}, f)
+os.environ["AVALLONE_BRAIN_CONFIG"] = os.path.join(_d.name, "c.json")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import mood  # noqa: E402
+
+KEEP = ["I've got stew to see to your hunger.", "I've got bread to pack for your journey.", "A warm bath may ease sore hands.",
+        "I don't owe money to the baker.", "There's ale to be had.", "I have fresh grain for your journey.",
+        "I've got loaves to sell, if you're hungry.", "There are crates of apples for sale.", "We've got plenty of ale to go round.",
+        "No debts to anyone, thank the gods.", "My bones feel the weight of it.", "Just a long day ahead of me.",
+        "Rest will ease a sore back.", "I've got grain to sell and salt to spare.",
+        "The hearth is warm and the tea is steeping just right.", "I'm busy enough.", "Make it quick."]
+CUT = ["State your business or move along, for I have crates to unpack.", "I've got flour, salt, and dried meats to move.",
+       "I've got far too many crates to unpack to be chatting.", "No time for idle talk when there's crates to be moved.",
+       "Too much work for one person, Tamsin.", "I've got grain to weigh and salt to pack.", "I've got work to finish.",
+       "I've a long list to finish.", "I've much to unpack.", "I've crates to move!", "Move along, I've sacks to mend.",
+       "Sun's out, but I've got crates to stack.", "The sky is grey and my bones ache.", "My bones feel the damp regardless.",
+       "Just a woman with a shop and a heavy back, Tamsin.", "I'm just a woman with a debt to the grain merchant.",
+       "I've far too much to do to sit and stare at it.", "I still owe coin to the miller.", "I've a headache brewing."]
+
+
+class Risky(unittest.TestCase):
+    def test_service_advice_denials_survive(self):
+        for t in KEEP:
+            self.assertIsNone(mood.excuse(t), t)
+            self.assertEqual(mood.strip_excuses(t), t)
+
+    def test_invented_claims_are_caught(self):
+        for t in CUT:
+            self.assertIsNotNone(mood.excuse(t), t)
+
+    def test_cut_keeps_the_answer(self):
+        t = "Grain, salt and ale, Tamsin. I've got crates to stack. Say 'vendor buy' to look."
+        self.assertEqual(mood.strip_excuses(t), "Grain, salt and ale, Tamsin. Say 'vendor buy' to look.")
+
+
+if __name__ == "__main__":
+    unittest.main()

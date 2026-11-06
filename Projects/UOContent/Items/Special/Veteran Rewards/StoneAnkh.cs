@@ -1,0 +1,201 @@
+using ModernUO.Serialization;
+using Server.Engines.VeteranRewards;
+using Server.Gumps;
+using Server.Multis;
+using Server.Network;
+
+namespace Server.Items;
+
+[SerializationGenerator(0)]
+public partial class StoneAnkhComponent : AddonComponent
+{
+    public StoneAnkhComponent(int itemID) : base(itemID)
+    {
+    }
+
+    public override double DefaultWeight => 1.0;
+
+    public override bool ForceShowProperties => ObjectPropertyList.Enabled;
+
+    public override void GetProperties(IPropertyList list)
+    {
+        base.GetProperties(list);
+
+        if (Addon is StoneAnkh { IsRewardItem: true })
+        {
+            list.Add(1076221); // 5th Year Veteran Reward
+        }
+    }
+}
+
+[SerializationGenerator(0)]
+public partial class StoneAnkh : BaseAddon, IRewardItem
+{
+    [InvalidateProperties]
+    [SerializableField(0)]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private bool _isRewardItem;
+
+    [Constructible]
+    public StoneAnkh(bool east = true)
+    {
+        if (east)
+        {
+            AddComponent(new StoneAnkhComponent(0x2), 0, 0, 0);
+            AddComponent(new StoneAnkhComponent(0x3), 0, -1, 0);
+        }
+        else
+        {
+            AddComponent(new StoneAnkhComponent(0x5), 0, 0, 0);
+            AddComponent(new StoneAnkhComponent(0x4), -1, 0, 0);
+        }
+    }
+
+    public override BaseAddonDeed Deed =>
+        new StoneAnkhDeed
+        {
+            IsRewardItem = _isRewardItem
+        };
+
+    public override void OnChop(Mobile from)
+    {
+        from.SendLocalizedMessage(500489); // You can't use an axe on that.
+    }
+
+    public override void GetProperties(IPropertyList list)
+    {
+        base.GetProperties(list);
+
+        if (Core.ML && _isRewardItem)
+        {
+            list.Add(1076221); // 5th Year Veteran Reward
+        }
+    }
+
+    public override void OnComponentUsed(AddonComponent c, Mobile from)
+    {
+        if (!from.InRange(Location, 2))
+        {
+            from.LocalOverheadMessage(MessageType.Regular, 0x3B2, 1019045); // I can't reach that.
+            return;
+        }
+
+        var house = BaseHouse.FindHouseAt(this);
+
+        if (house?.IsOwner(from) == true)
+        {
+            RewardDemolitionGump.DisplayTo(from, this, 1049783); // Do you wish to re-deed this decoration?
+        }
+        else
+        {
+            // You can only re-deed this decoration if you are the house owner or originally placed the decoration.
+            from.SendLocalizedMessage(1049784);
+        }
+    }
+}
+
+[SerializationGenerator(0)]
+public partial class StoneAnkhDeed : BaseAddonDeed, IRewardItem
+{
+    [InvalidateProperties]
+    [SerializableField(0)]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private bool _isRewardItem;
+
+    private bool _east;
+
+    [Constructible]
+    public StoneAnkhDeed() => LootType = LootType.Blessed;
+
+    public override int LabelNumber => 1049773; // deed for a stone ankh
+
+    public override BaseAddon Addon =>
+        new StoneAnkh(_east)
+        {
+            IsRewardItem = _isRewardItem
+        };
+
+    public override void OnDoubleClick(Mobile from)
+    {
+        if (_isRewardItem && !RewardSystem.CheckIsUsableBy(from, this))
+        {
+            return;
+        }
+
+        if (IsChildOf(from.Backpack))
+        {
+            StoneAnkhGump.DisplayTo(from, this);
+        }
+        else
+        {
+            from.SendLocalizedMessage(1042038); // You must have the object in your backpack to use it.
+        }
+    }
+
+    private void SendTarget(Mobile m)
+    {
+        base.OnDoubleClick(m);
+    }
+
+    public override void GetProperties(IPropertyList list)
+    {
+        base.GetProperties(list);
+
+        if (_isRewardItem)
+        {
+            list.Add(1076221); // 5th Year Veteran Reward
+        }
+    }
+
+    private class StoneAnkhGump : StaticGump<StoneAnkhGump>
+    {
+        private readonly StoneAnkhDeed _deed;
+
+        public override bool Singleton => true;
+
+        private StoneAnkhGump(StoneAnkhDeed deed) : base(150, 50) => _deed = deed;
+
+        public static void DisplayTo(Mobile from, StoneAnkhDeed deed)
+        {
+            if (from?.NetState == null || deed?.Deleted != false)
+            {
+                return;
+            }
+
+            from.SendGump(new StoneAnkhGump(deed));
+        }
+
+        protected override void BuildLayout(ref StaticGumpBuilder builder)
+        {
+            builder.AddPage();
+
+            builder.AddBackground(0, 0, 300, 150, 0xA28);
+
+            builder.AddItem(90, 30, 0x4);
+            builder.AddItem(112, 30, 0x5);
+            builder.AddButton(50, 35, 0x867, 0x869, (int)Buttons.South); // South
+
+            builder.AddItem(170, 30, 0x2);
+            builder.AddItem(192, 30, 0x3);
+            builder.AddButton(145, 35, 0x867, 0x869, (int)Buttons.East); // East
+        }
+
+        public override void OnResponse(NetState sender, in RelayInfo info)
+        {
+            if (_deed?.Deleted != false || info.ButtonID == (int)Buttons.Cancel)
+            {
+                return;
+            }
+
+            _deed._east = info.ButtonID == (int)Buttons.East;
+            _deed.SendTarget(sender.Mobile);
+        }
+
+        private enum Buttons
+        {
+            Cancel,
+            South,
+            East
+        }
+    }
+}

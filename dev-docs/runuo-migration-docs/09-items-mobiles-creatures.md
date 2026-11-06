@@ -1,0 +1,725 @@
+# Items, Mobiles & Creatures Migration
+
+## Overview
+
+Most RunUO migration work involves converting Item, Mobile, and BaseCreature subclasses. This doc combines all prior system changes (serialization, timers, property lists, naming) into complete step-by-step conversion guides for the most common content types.
+
+## Item Migration Step-by-Step
+
+### 1. Apply Foundation Changes
+- File-scoped namespace
+- `using ModernUO.Serialization;`
+- Rename `m_` fields to `_camelCase`
+- `[Constructable]` → `[Constructible]`
+- Replace `Console.WriteLine` with logging
+- Replace `DateTime.UtcNow` with `Core.Now`
+
+### 2. Add Serialization Attributes
+```csharp
+[SerializationGenerator(N, false)]  // N = old version + 1; false if old Deserialize used ReadInt()
+public partial class MyItem : Item  // Add partial
+```
+
+### 3. Convert Fields to [SerializableField]
+```csharp
+// RunUO
+private int m_Charges;
+[CommandProperty(AccessLevel.GameMaster)]
+public int Charges { get { return m_Charges; } set { m_Charges = value; InvalidateProperties(); } }
+
+// ModernUO
+[SerializableField(0)]
+[InvalidateProperties]
+[SerializedCommandProperty(AccessLevel.GameMaster)]
+private int _charges;
+// Property auto-generated with InvalidateProperties
+```
+
+### 4. Delete Boilerplate
+- Delete `public MyItem(Serial serial) : base(serial) { }`
+- Delete `public override void Serialize(GenericWriter writer) { ... }`
+- Delete `public override void Deserialize(GenericReader reader) { ... }`
+
+### 5. Convert Timer Fields
+```csharp
+// RunUO
+private InternalTimer m_Timer;
+// + nested Timer class
+
+// ModernUO
+private TimerExecutionToken _timerToken;
+// + direct Timer.StartTimer() calls
+// + [AfterDeserialization] for timer restoration
+// + OnAfterDelete() for timer cancellation
+```
+
+### 6. Convert GetProperties
+```csharp
+// RunUO
+public override void GetProperties(ObjectPropertyList list)
+{
+    base.GetProperties(list);
+    list.Add(1060741, m_Charges.ToString());
+}
+
+// ModernUO
+public override void GetProperties(IPropertyList list)
+{
+    base.GetProperties(list);
+    list.Add(1060741, $"{_charges}");
+}
+```
+
+### 7. Convert Context Menus (if present)
+```csharp
+// RunUO
+public override void GetContextMenuEntries(Mobile from, List<ContextMenuEntry> list)
+{
+    base.GetContextMenuEntries(from, list);
+    list.Add(new MyEntry(this));
+}
+
+// ModernUO
+public override void GetContextMenuEntries(Mobile from, ref PooledRefList<ContextMenuEntry> list)
+{
+    base.GetContextMenuEntries(from, ref list);
+    list.Add(new MyEntry(this));
+}
+```
+
+## Complete Before/After: Item
+
+**RunUO:**
+```csharp
+using System;
+using Server;
+using Server.Network;
+
+namespace Server.Items
+{
+    public class MagicLantern : Item
+    {
+        private int m_Charges;
+        private Mobile m_Owner;
+        private InternalTimer m_Timer;
+
+        [CommandProperty(AccessLevel.GameMaster)]
+        public int Charges
+        {
+            get { return m_Charges; }
+            set { m_Charges = value; InvalidateProperties(); }
+        }
+
+        [CommandProperty(AccessLevel.GameMaster)]
+        public Mobile Owner
+        {
+            get { return m_Owner; }
+            set { m_Owner = value; }
+        }
+
+        [Constructable]
+        public MagicLantern() : base(0xA25)
+        {
+            m_Charges = Utility.RandomMinMax(5, 15);
+            Weight = 2.0;
+            Light = LightType.Circle300;
+            Name = "a magic lantern";
+
+            m_Timer = new InternalTimer(this);
+            m_Timer.Start();
+        }
+
+        public MagicLantern(Serial serial) : base(serial) { }
+
+        public override void OnDelete()
+        {
+            if (m_Timer != null)
+                m_Timer.Stop();
+
+            base.OnDelete();
+        }
+
+        public override void GetProperties(ObjectPropertyList list)
+        {
+            base.GetProperties(list);
+            list.Add(1060741, m_Charges.ToString());
+        }
+
+        public override void OnDoubleClick(Mobile from)
+        {
+            if (!IsChildOf(from.Backpack))
+            {
+                from.SendLocalizedMessage(1042001);
+                return;
+            }
+
+            if (m_Charges <= 0)
+            {
+                from.SendMessage("The lantern is depleted.");
+                return;
+            }
+
+            m_Charges--;
+            InvalidateProperties();
+            from.SendMessage("The lantern flares brightly!");
+        }
+
+        public override void Serialize(GenericWriter writer)
+        {
+            base.Serialize(writer);
+            writer.Write((int)1); // version
+
+            writer.Write(m_Owner);
+            writer.Write(m_Charges);
+        }
+
+        public override void Deserialize(GenericReader reader)
+        {
+            base.Deserialize(reader);
+            int version = reader.ReadInt();
+
+            switch (version)
+            {
+                case 1:
+                    m_Owner = reader.ReadMobile();
+                    goto case 0;
+                case 0:
+                    m_Charges = reader.ReadInt();
+                    break;
+            }
+
+            m_Timer = new InternalTimer(this);
+            m_Timer.Start();
+        }
+
+        private void Glow()
+        {
+            if (m_Charges > 0)
+                Effects.SendLocationParticles(this, 0x376A, 9, 10, 5042);
+        }
+
+        private class InternalTimer : Timer
+        {
+            private MagicLantern m_Lantern;
+
+            public InternalTimer(MagicLantern lantern) : base(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3))
+            {
+                m_Lantern = lantern;
+                Priority = TimerPriority.OneSecond;
+            }
+
+            protected override void OnTick()
+            {
+                m_Lantern.Glow();
+            }
+        }
+    }
+}
+```
+
+**ModernUO:**
+```csharp
+using ModernUO.Serialization;
+
+namespace Server.Items;
+
+[SerializationGenerator(0)]
+public partial class MagicLantern : Item
+{
+    [SerializableField(0)]
+    [InvalidateProperties]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private int _charges;
+
+    [SerializableField(1)]
+    [SerializedCommandProperty(AccessLevel.GameMaster)]
+    private Mobile _owner;
+
+    private TimerExecutionToken _glowTimer;
+
+    [Constructible]
+    public MagicLantern() : base(0xA25)
+    {
+        _charges = Utility.RandomMinMax(5, 15);
+        Weight = 2.0;
+        Light = LightType.Circle300;
+        StartGlow();
+    }
+
+    public override string DefaultName => "a magic lantern";
+
+    private void StartGlow()
+    {
+        Timer.StartTimer(TimeSpan.FromSeconds(3), TimeSpan.FromSeconds(3), Glow, out _glowTimer);
+    }
+
+    [AfterDeserialization]
+    private void AfterDeserialization() => StartGlow();
+
+    public override void OnAfterDelete()
+    {
+        _glowTimer.Cancel();
+        base.OnAfterDelete();
+    }
+
+    public override void GetProperties(IPropertyList list)
+    {
+        base.GetProperties(list);
+        list.Add(1060741, $"{_charges}");
+    }
+
+    public override void OnDoubleClick(Mobile from)
+    {
+        if (!IsChildOf(from.Backpack))
+        {
+            from.SendLocalizedMessage(1042001);
+            return;
+        }
+
+        if (_charges <= 0)
+        {
+            from.SendMessage("The lantern is depleted.");
+            return;
+        }
+
+        Charges--;
+        from.SendMessage("The lantern flares brightly!");
+    }
+
+    private void Glow()
+    {
+        if (_charges > 0)
+            Effects.SendLocationParticles(this, 0x376A, 9, 10, 5042);
+    }
+}
+```
+
+**What changed:**
+- File-scoped namespace
+- `partial class` + `[SerializationGenerator(0)]` (omit `encoded` parameter)
+- `[Constructable]` → `[Constructible]`
+- `m_Charges`/`m_Owner` → `_charges`/`_owner` with `[SerializableField]`
+- Manual properties → auto-generated with `[SerializedCommandProperty]`
+- `InvalidateProperties()` in setter → `[InvalidateProperties]` attribute
+- `Name = "..."` → `DefaultName =>` property override
+- Serial constructor deleted
+- Serialize/Deserialize deleted
+- Nested InternalTimer class → `Timer.StartTimer()` + `TimerExecutionToken`
+- Timer in Deserialize → `[AfterDeserialization]`
+- `OnDelete()` timer stop → `OnAfterDelete()` + `_token.Cancel()`
+- `ObjectPropertyList` → `IPropertyList`
+- `GetProperties` uses string interpolation with holes
+
+## BaseCreature Migration
+
+BaseCreature subclasses follow the same pattern as items but have additional considerations.
+
+### Key Differences from Items
+1. Constructor calls `base(AIType, FightMode)` instead of `base(itemID)`
+2. Stats set with `SetStr()`, `SetDex()`, `SetInt()`, etc.
+3. Damage/resistance types set explicitly
+4. `GenerateLoot()` override for loot tables
+5. Many property overrides (CorpseName, Meat, Hides, etc.)
+
+### Before/After: Simple Creature
+
+**RunUO:**
+```csharp
+namespace Server.Mobiles
+{
+    [CorpseName("a wolf corpse")]
+    public class ForestWolf : BaseCreature
+    {
+        [Constructable]
+        public ForestWolf() : base(AIType.AI_Melee, FightMode.Closest, 10, 1, 0.2, 0.4)
+        {
+            Name = "a forest wolf";
+            Body = 225;
+            BaseSoundID = 0xE5;
+
+            SetStr(80, 120);
+            SetDex(90, 110);
+            SetInt(20, 40);
+
+            SetHits(60, 80);
+
+            SetDamage(8, 14);
+
+            SetDamageType(ResistanceType.Physical, 100);
+
+            SetResistance(ResistanceType.Physical, 25, 35);
+
+            SetSkill(SkillName.MagicResist, 30.0, 50.0);
+            SetSkill(SkillName.Tactics, 50.0, 70.0);
+            SetSkill(SkillName.Wrestling, 50.0, 70.0);
+
+            Fame = 600;
+            Karma = 0;
+
+            VirtualArmor = 28;
+
+            Tamable = true;
+            ControlSlots = 1;
+            MinTameSkill = 50.1;
+        }
+
+        public ForestWolf(Serial serial) : base(serial) { }
+
+        public override int Meat { get { return 1; } }
+        public override int Hides { get { return 6; } }
+        public override FoodType FavoriteFood { get { return FoodType.Meat; } }
+        public override PackInstinct PackInstinct { get { return PackInstinct.Canine; } }
+
+        public override void GenerateLoot()
+        {
+            AddLoot(LootPack.Meager);
+        }
+
+        public override void Serialize(GenericWriter writer)
+        {
+            base.Serialize(writer);
+            writer.Write((int)0);
+        }
+
+        public override void Deserialize(GenericReader reader)
+        {
+            base.Deserialize(reader);
+            int version = reader.ReadInt();
+        }
+    }
+}
+```
+
+**ModernUO:**
+```csharp
+using ModernUO.Serialization;
+
+namespace Server.Mobiles;
+
+[SerializationGenerator(0)]
+public partial class ForestWolf : BaseCreature
+{
+    [Constructible]
+    public ForestWolf() : base(AIType.AI_Melee, FightMode.Closest)
+    {
+        Body = 225;
+        BaseSoundID = 0xE5;
+
+        SetStr(80, 120);
+        SetDex(90, 110);
+        SetInt(20, 40);
+
+        SetHits(60, 80);
+
+        SetDamage(8, 14);
+
+        SetDamageType(ResistanceType.Physical, 100);
+
+        SetResistance(ResistanceType.Physical, 25, 35);
+
+        SetSkill(SkillName.MagicResist, 30.0, 50.0);
+        SetSkill(SkillName.Tactics, 50.0, 70.0);
+        SetSkill(SkillName.Wrestling, 50.0, 70.0);
+
+        Fame = 600;
+        Karma = 0;
+
+        VirtualArmor = 28;
+
+        Tamable = true;
+        ControlSlots = 1;
+        MinTameSkill = 50.1;
+    }
+
+    public override string CorpseName => "a wolf corpse";
+    public override string DefaultName => "a forest wolf";
+    public override int Meat => 1;
+    public override int Hides => 6;
+    public override FoodType FavoriteFood => FoodType.Meat;
+    public override PackInstinct PackInstinct => PackInstinct.Canine;
+
+    public override void GenerateLoot()
+    {
+        AddLoot(LootPack.Meager);
+    }
+}
+```
+
+**What changed:**
+- `[CorpseName("...")]` attribute → `CorpseName` property override
+- `Name = "..."` → `DefaultName` property override
+- `BaseCreature(AI, Fight, 10, 1, 0.2, 0.4)` → `BaseCreature(AI, Fight)` (extra params have defaults)
+- Expression-bodied property overrides
+- Serialization boilerplate removed
+- Serial constructor removed
+
+## Key Creature Constructor Differences
+
+```csharp
+// RunUO — many parameters
+public ForestWolf() : base(AIType.AI_Melee, FightMode.Closest, 10, 1, 0.2, 0.4)
+// 10 = RangePerception, 1 = RangeFight, 0.2 = ActiveSpeed, 0.4 = PassiveSpeed
+
+// ModernUO — simplified (defaults built in)
+public ForestWolf() : base(AIType.AI_Melee, FightMode.Closest)
+```
+
+The extra parameters (RangePerception, RangeFight, ActiveSpeed, PassiveSpeed) have sensible defaults. Only specify them if they differ from defaults.
+
+## Common Creature Attribute Changes
+
+| RunUO | ModernUO |
+|---|---|
+| `[CorpseName("a corpse")]` attribute | `public override string CorpseName => "a corpse";` |
+| `Name = "a creature"` in constructor | `public override string DefaultName => "a creature";` |
+| `get { return value; }` | `=> value;` expression-bodied |
+
+## AI Movement: No `run` Argument
+
+RunUO's movement calls took a `run` flag that callers set inconsistently (`true` in
+combat, `false` for pets, gated by `dist > 5` inside `MoveTo`). The flag only selects the
+client's per-step animation time, so ModernUO derives it from the creature's step pace
+(`BaseAI.ShouldRun`) and the parameter is gone:
+
+```csharp
+// RunUO
+MoveTo(combatant, true, m_Mobile.RangeFight);
+WalkMobileRange(m_Mobile.ControlMaster, 1, false, 0, 1);
+
+// ModernUO
+MoveTo(combatant, Mobile.RangeFight);
+WalkMobileRange(Mobile.ControlMaster, 1, 0, 1);
+```
+
+`ApproachTarget`, `MoveToPoint` and `PathFollower.Follow` lose the argument the same way.
+To make a creature run, make it fast (`SetMoveSpeed` / `npc-speeds.json`), not flagged.
+An isolated step (after the creature stood for at least a walk interval) goes out as a
+walk regardless of pace — only a continuing cadence, or a pace faster than the run
+interpolation, flags run.
+
+## Retaliation: `OnAggressiveAction` Returns `bool`
+
+RunUO's `BaseAI.OnAggressiveAction` was a `void` hook that only swapped to a closer
+aggressor; `BaseCreature.AggressiveAction` then decided the response itself and set
+`Combatant` regardless of what the AI had done. ModernUO moves the whole retaliation policy
+into the hook — the stand-down verdict for commanded pets, the closer-aggressor swap
+(`PreferCloserAggressor`), and the `IssueOrder(Attack)` vs `Combatant =` choice — and
+`BaseCreature` only runs its bookkeeping (`StopFlee`, `ForceReacquire`, ethics shield) when
+the hook returns `true`:
+
+```csharp
+// RunUO — swap only; BaseCreature picks the combatant afterwards
+public override void OnAggressiveAction(Mobile aggressor)
+{
+    if (m_Mobile.Combatant == null)
+    {
+        m_Mobile.Combatant = aggressor;
+        return;
+    }
+
+    base.OnAggressiveAction(aggressor);
+}
+
+// ModernUO — the AI owns the response; false = stood down, nothing else fires
+public override bool OnAggressiveAction(Mobile aggressor)
+{
+    if (Mobile.Combatant == null)
+    {
+        Mobile.Combatant = aggressor;
+    }
+    else
+    {
+        PreferCloserAggressor(aggressor);
+    }
+
+    return true;
+}
+```
+
+An override that used to `return;` early to refuse a fight now returns `false`; calling
+`base.OnAggressiveAction` runs the full stock policy, including setting `Combatant`, so an AI
+that only wants the closer-aggressor swap calls `PreferCloserAggressor` instead.
+
+## Masters: One Reference, Not Two
+
+RunUO kept `ControlMaster` and `SummonMaster` as two independent fields. ModernUO stores one `Master`.
+`ControlMaster` and `SummonMaster` are views of it gated by `Controlled` and `Summoned`, and
+`GetMaster()` is `ControlMaster ?? SummonMaster` (see `dev-docs/content-patterns.md` § Masters).
+
+`ControlMaster != null` implies `Controlled`, so a bare `ControlMaster` check needs no `Controlled` in front of it.
+
+Assignments compile unchanged, because both setters assign `Master`. Reads need a look:
+
+| RunUO | ModernUO |
+|---|---|
+| `bc.ControlMaster ?? bc.SummonMaster` | `bc.GetMaster()` |
+| `bc.Controlled && bc.ControlMaster == m \|\| bc.Summoned && bc.SummonMaster == m` | `bc.GetMaster() == m` |
+| `Controlled && ControlMaster == m` (`m` non-null) | `ControlMaster == m` |
+| `SummonMaster` on a creature that sets it without `Summoned = true` (RunUO's `BaseEnraged`) | `Master` |
+
+Gotchas:
+
+- **A summon master without `Summoned` reads back null.** A RunUO creature that assigned
+  `SummonMaster = caster;` without `Summoned = true` and later read `SummonMaster` now reads null.
+  The write still compiles; only the read changes. Use `Master` for both, and override `IsEnemy` if the
+  creature must never target its master (see `BaseEnraged`).
+- **One master per creature.** `SummonMaster = x` on a tamed pet replaces its owner, and
+  `ControlMaster = null` on an uncontrolled summon clears its caster. Code that tracked a different
+  owner and summoner keeps only the last assignment.
+- **`ControlMaster = x;` is not a tame.** The setter only moves follower slots. It skips everything
+  `SetControlMaster(x)` does: raising `Controlled`, checking the follower cap, resetting the order
+  and `ControlTarget`, unlinking from the spawner, clearing the waypoint, home and guild. On its own it
+  leaves a creature that uses up `x`'s follower slots, can't be commanded and still reads as wild.
+  Use `SetControlMaster(x)`.
+- **`SetControlMaster(null)` keeps an uncontrolled summon's caster.** It clears the master only
+  while the creature is `Controlled`.
+
+## Target Acquisition: `AcquireOnApproach` Is a Delay
+
+RunUO's `AcquireOnApproach` bool (paragon insta-aggro on approach) is now
+`AcquireOnApproachDelay`, a `TimeSpan` reaction-time gradient that applies to every
+creature — enemy movement inside `AcquireOnApproachRange` schedules a scan within the
+delay instead of waiting out the 10 s `ReacquireDelay` poll:
+
+```csharp
+// RunUO
+public override bool AcquireOnApproach => true;
+
+// ModernUO — Zero is the old instant behavior; larger values are dumber
+public override TimeSpan AcquireOnApproachDelay => TimeSpan.Zero;
+```
+
+`AcquireOnApproachRange` stays 10 for all creatures (reactive aggro is on-screen; the
+periodic `ReacquireDelay` scan still sweeps the full `RangePerception`). The
+acquired target comes from the normal FightMode-ranked scan, not from whichever mobile
+happened to move. See `content-patterns.md` § Target Acquisition.
+
+## Damage Entries: Inline `ValueLinkList`, Not `List<DamageEntry>`
+
+RunUO's `Mobile.DamageEntries` was a `List<DamageEntry>` allocated for every mobile.
+ModernUO keeps damage entries in an inline `ValueLinkList<DamageEntry>` struct held by
+the mobile itself, ordered least recent → most recent, so a mobile that never takes
+damage owns no list object and `RegisterDamage` relinks in O(1). The property is
+`ref readonly`; expired entries are pruned when it is read.
+
+```csharp
+// RunUO
+for (var i = m.DamageEntries.Count - 1; i >= 0; --i)
+{
+    var de = m.DamageEntries[i];          // indexer
+    ...
+}
+m.DamageEntries.Clear();
+var rights = BaseCreature.GetLootingRights(m.DamageEntries, m.HitsMax); // List<DamageEntry>
+
+// ModernUO — needs `using Server.Collections;` for the enumerator extensions
+foreach (var de in m.DamageEntries.ByDescending()) // most recent first
+{
+    ...
+}
+foreach (var de in m.DamageEntries)                // least recent first
+{
+    ...
+}
+m.ClearDamageEntries();
+var rights = BaseCreature.GetLootingRights(m.DamageEntries, m.HitsMax); // in ValueLinkList<DamageEntry>
+```
+
+What no longer compiles: the indexer, `.Add`, `.Remove`, `.RemoveAt`, `.Clear`, and
+passing the property where a `List<DamageEntry>` is expected. `.Count`,
+`FindDamageEntryFor`, `FindMostRecentDamager` and the other `Find*` methods, and
+`RegisterDamage` are unchanged. `DamageEntry` now carries `Next`/`Previous`/`OnLinkList`
+link fields; never set them yourself, and never call a `ValueLinkList` mutator on the
+`ref readonly` property — it compiles against a copy and corrupts the node's link state.
+Mutate only through `RegisterDamage` and `ClearDamageEntries`.
+
+## Item Name Changes
+
+```csharp
+// RunUO
+Name = "a magic gem";  // Set in constructor
+
+// ModernUO — prefer property overrides
+public override string DefaultName => "a magic gem";
+// OR for cliloc:
+public override int LabelNumber => 1234567;
+```
+
+## Equipment/Weapon/Armor Migration
+
+Weapons and armor follow the same item pattern but inherit from specialized base classes:
+
+```csharp
+// ModernUO weapon example
+[SerializationGenerator(0)]
+public partial class MySpecialSword : BaseSword
+{
+    [Constructible]
+    public MySpecialSword() : base(0x13FF) // Katana graphic
+    {
+        Weight = 6.0;
+        Layer = Layer.TwoHanded;
+    }
+
+    public override string DefaultName => "a special sword";
+    public override int AosStrengthReq => 25;
+    public override int AosMinDamage => 11;
+    public override int AosMaxDamage => 13;
+    public override int AosSpeed => 44;
+    public override float MlSpeed => 2.50f;
+}
+```
+
+## Common Base Classes
+
+| RunUO | ModernUO | Notes |
+|---|---|---|
+| `BaseWeapon` | `BaseWeapon` | Same, add `partial` |
+| `BaseSword` / `BaseMace` / etc. | Same | Same, add `partial` |
+| `BaseArmor` | `BaseArmor` | Same, add `partial` |
+| `BaseClothing` | `BaseClothing` | Same, add `partial` |
+| `BaseJewel` | `BaseJewel` | Same, add `partial` |
+| `BaseContainer` | `BaseContainer` | Same, add `partial` |
+| `Food` | `Food` | Same, add `partial` |
+| `BasePotion` | `BasePotion` | Same, add `partial` |
+
+## Edge Cases & Gotchas
+
+### 1. [TypeAlias] for Save Compatibility
+If a class changed namespace or name, use `[TypeAlias]`:
+```csharp
+[TypeAlias("Server.Items.OldName")]
+[SerializationGenerator(0)]
+public partial class NewName : Item { }
+```
+
+### 2. OnDoubleClick Validation
+ModernUO patterns prefer:
+```csharp
+if (!IsChildOf(from.Backpack))
+{
+    from.SendLocalizedMessage(1042001);
+    return;
+}
+```
+
+### 3. CorpseName as Property Override
+RunUO uses `[CorpseName]` attribute. ModernUO uses a property override instead.
+
+### 4. SetMana(0) for Non-Casters
+Always call `SetMana(0)` for creatures that shouldn't have mana.
+
+### 5. Decrement via Generated Property
+Use the generated property name (PascalCase) when decrementing to trigger dirty tracking:
+```csharp
+Charges--;  // Uses generated property — triggers MarkDirty + InvalidateProperties
+// NOT: _charges--;  // Bypasses tracking
+```
+
+## See Also
+
+- `dev-docs/content-patterns.md` — ModernUO content creation patterns
+- `dev-docs/serialization.md` — Serialization system
+- `02-serialization.md` — Serialization migration details
+- `03-timers.md` — Timer migration
+- `06-property-lists.md` — Property list migration
