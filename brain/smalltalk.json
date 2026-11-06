@@ -4,15 +4,15 @@
   "town_share": 0.3,
   "any": [
     "the price of bread in {town} went up again this week",
-    "a cart lost a wheel on the road to {near} and nobody has fixed the rut",
+    "a wagon bound for {near} broke an axle and blocked half the way",
     "folk say the winter will come early this year",
     "someone saw lights out on the water past {town} last night",
     "the well by the market tastes of iron lately",
     "a travelling tinker passed through, selling pots that leak",
-    "the roads to {near} are muddy after the rain",
+    "rain has turned the track toward {near} into soup",
     "two merchants nearly came to blows over a bolt of cloth",
     "the bells rang late for no reason anyone can name",
-    "a flock of crows has settled on the old mill"
+    "crows keep gathering on the old mill roof"
   ],
   "towns": {
     "Britain": [
@@ -20,12 +20,12 @@
       "the bakers on the west side are feuding over a recipe"
     ],
     "Minoc": [
-      "the miners struck a seam of something shiny, or so they claim",
+      "the Minoc miners swear they hit something shiny down the east shaft",
       "the tinkers are short of good iron"
     ],
     "Yew": [
       "the woodcutters found wolf tracks near the abbey",
-      "the abbey's wine is said to be better than last year's"
+      "the abbey brewed its best batch in years, the monks say"
     ],
     "Trinsic": [
       "the paladins are drilling on the green every morning"

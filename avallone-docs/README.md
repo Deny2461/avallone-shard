@@ -1,4 +1,4 @@
-# Avallónë — an Ultima Online shard where the townsfolk talk back
+# Avallónë — an Ultima Online shard where the townsfolk and NPCs come to life
 
 Avallónë is a small, private [Ultima Online](https://uo.com) shard built on
 [ModernUO](https://github.com/modernuo/ModernUO). On top of the stock game it adds NPCs that hold real

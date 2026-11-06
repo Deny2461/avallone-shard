@@ -1,17 +1,76 @@
 {
   "_comment": "SAMPLE turning points - the real rules are not published. Each fires once per companion+character; each change is one step; traits are -2..+2. Trait lines are indexed -2,-1,0,+1,+2 (the 0 line is empty) and written to the companion in the second person. A rule fires when the trust band is at least 'band' and every count in 'counts' (ledger event kinds) has been reached; 'memory' becomes a permanent memory line.",
   "traits": {
-    "warmth": ["You keep this one at arm's length.", "You are guarded with this one.", "", "You have grown fond of this one.", "This one feels like family to you."],
-    "openness": ["You say as little as you can.", "You keep your own counsel.", "", "You speak freely with this one.", "You hide very little from this one."],
-    "protectiveness": ["You look after yourself first.", "You let this one take their own risks.", "", "You keep a close eye on this one in a fight.", "You would step in front of a blade for this one."],
-    "humour": ["You have no patience for jokes.", "You rarely smile.", "", "You tease this one now and then.", "You and this one laugh easily together."],
-    "deference": ["You argue with this one's choices.", "You question this one's plans.", "", "You trust this one's lead.", "You follow this one's lead without a second thought."]
+    "warmth": [
+      "You keep this one at arm's length.",
+      "You are guarded with this one.",
+      "",
+      "You have grown fond of this one.",
+      "This one feels like family to you."
+    ],
+    "openness": [
+      "You say as little as you can.",
+      "You keep your own counsel.",
+      "",
+      "You speak freely with this one.",
+      "You hide very little from this one."
+    ],
+    "protectiveness": [
+      "You look after yourself first.",
+      "You let this one take their own risks.",
+      "",
+      "You keep a close eye on this one in a fight.",
+      "You would step in front of a blade for this one."
+    ],
+    "humour": [
+      "Jests leave you cold.",
+      "You rarely smile.",
+      "",
+      "You tease this one now and then.",
+      "You and this one laugh easily together."
+    ],
+    "deference": [
+      "You argue with this one's choices.",
+      "You question this one's plans.",
+      "",
+      "You trust this one's lead.",
+      "You follow this one's lead without a second thought."
+    ]
   },
   "companions": {
     "elspeth": [
-      {"id": "sample-first-thaw", "band": "warming", "counts": {"conversation": 10}, "changes": {"warmth": 1}, "memory": "Somewhere along the road, this one stopped being a stranger."},
-      {"id": "sample-new-ground", "band": "warming", "counts": {"region_entered": 5}, "changes": {"openness": 1}, "memory": "We have seen a fair bit of the world together now."},
-      {"id": "sample-raised-up", "counts": {"owner_resurrected": 1}, "changes": {"protectiveness": 1}, "memory": "I watched this one fall once. I will not watch it again."}
+      {
+        "id": "sample-first-thaw",
+        "band": "warming",
+        "counts": {
+          "conversation": 10
+        },
+        "changes": {
+          "warmth": 1
+        },
+        "memory": "Somewhere along the road, this one stopped being a stranger."
+      },
+      {
+        "id": "sample-new-ground",
+        "band": "warming",
+        "counts": {
+          "region_entered": 5
+        },
+        "changes": {
+          "openness": 1
+        },
+        "memory": "We have seen a fair bit of the world together now."
+      },
+      {
+        "id": "sample-raised-up",
+        "counts": {
+          "owner_resurrected": 1
+        },
+        "changes": {
+          "protectiveness": 1
+        },
+        "memory": "I watched this one fall once. I will not watch it again."
+      }
     ]
   }
 }

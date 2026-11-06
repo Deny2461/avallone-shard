@@ -1627,18 +1627,41 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(502, {"ok": False, "error": str(e)})
 
 
-def loopback_only(host):
-    """The brain trusts every caller as the shard: no authentication, by design, because it only ever listens
+class ThreadingHTTPServerV6(ThreadingHTTPServer):
+    address_family = socket.AF_INET6
+
+
+def loopback_bind_address(host):
+    """The address to bind for a configured listen_host, or None if it is not loopback.
+
+    The brain trusts every caller as the shard: no authentication, by design, because it only ever listens
     inside the shard's own machine. So it must never listen anywhere else (Codex public-snapshot review
-    2026-11-06, finding 6). True only for a loopback address or "localhost"."""
+    2026-11-06, finding 6). "localhost" binds 127.0.0.1 itself, so name resolution cannot widen it; an IPv6
+    loopback literal (with or without brackets) is returned in its normal form (round 2, P3)."""
     import ipaddress
-    h = str(host or "").strip().strip("[]")
+    h = str(host or "").strip()
+    if h.startswith("[") and h.endswith("]"):
+        h = h[1:-1]
     if h.lower() == "localhost":
-        return True
+        return "127.0.0.1"
     try:
-        return ipaddress.ip_address(h).is_loopback
+        ip = ipaddress.ip_address(h)
     except ValueError:
-        return False
+        return None
+    return str(ip) if ip.is_loopback else None
+
+
+def loopback_only(host):
+    return loopback_bind_address(host) is not None
+
+
+def make_server(host, port):
+    """Bind the brain's HTTP server on a loopback address only, IPv4 or IPv6 to match the address."""
+    addr = loopback_bind_address(host)
+    if addr is None:
+        raise ValueError(f"listen_host {host!r} is not loopback")
+    cls = ThreadingHTTPServerV6 if ":" in addr else ThreadingHTTPServer
+    return cls((addr, port), Handler)
 
 
 def main():
@@ -1655,7 +1678,7 @@ def main():
             log(event="rumour", outcome="unavailable", error=f"{type(e).__name__}: {e}")
     SECRETS.refresh()
     LORE.refresh()
-    server = ThreadingHTTPServer((CFG["listen_host"], CFG["listen_port"]), Handler)
+    server = make_server(CFG["listen_host"], CFG["listen_port"])
     server.daemon_threads = True
     if LEDGER is not None and CFG["reflection_mode"] in ("shadow", "live"):
         threading.Thread(target=reflection_loop, name="reflection", daemon=True).start()
