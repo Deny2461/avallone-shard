@@ -345,7 +345,17 @@ def explain(req, ledger, rumours):
     return d
 
 
-def holds_gossip(d, mode):
+def greet_stranger(d):
+    """Familiarity below greet_familiarity_min: the NPC does not know them yet."""
+    return d["familiarity"] < cfg().get("gossip", {}).get("greet_familiarity_min", 3)
+
+
+def greet_scale(d):
+    """Step B (the owner, chat, 2026-11-08): a stranger still gets a greeting hint, at 1/6 of the NPC's normal greeting rate."""
+    return float(cfg().get("gossip", {}).get("greet_stranger_share", 0.0)) if d is not None and greet_stranger(d) else 1.0
+
+
+def holds_gossip(d, mode, stranger_pass=False):
     """Gossip held back by code (B6 - dev trial 2026-11-01: band words alone barely move gemma4:12b). Wary or worse: no
     live gossip at all, asked or not (small talk is still fine). Cool: nothing volunteered on a greeting. A reason or None."""
     g = cfg().get("gossip", {})
@@ -353,9 +363,10 @@ def holds_gossip(d, mode):
         return "dials: wary of them - keeps the town's gossip to themselves"
     if mode == "greet" and d["warmth"] < g.get("greet_warmth_below", -20):
         return "dials: cool towards them - volunteers nothing"
-    if mode == "greet" and d["familiarity"] < g.get("greet_familiarity_min", 3):
+    if mode == "greet" and d["familiarity"] < g.get("greet_familiarity_min", 3) and not stranger_pass:
         # the owner, chat, 2026-11-02: gossip only - an NPC that does not know them yet (
-        # 3 visit days) volunteers nothing; asked-for news is unaffected.
+        # 3 visit days) volunteers nothing; asked-for news is unaffected. Step B (the owner, 2026-11-08): except when the brain's
+        # greeting draw passed at the stranger rate (greet_scale) - stranger_pass. Wary and cool still hold, above.
         return "dials: does not know them yet - volunteers nothing"
     return None
 

@@ -63,7 +63,7 @@ flowchart TB
     subgraph B["Brain: Python service"]
         direction TB
         PR["Prompt builder<br/>persona · lore · memory · dials · rumours"]
-        F["Output checks<br/>era · decency · names · promises"]
+        F["Output checks<br/>era · decency · names · mood excuses · repeats"]
         M[("SQLite memory")]
         PR --- M
     end
@@ -96,11 +96,12 @@ Everything is in the house: two small machines, no cloud.
 |---|---|
 | **Shard + brain** | One small Linux container (Ubuntu 22.04, **2 CPU cores, 4 GB RAM**) on a home server running Proxmox VE. ModernUO on .NET 10, and the brain on Python 3.10 with SQLite. The game itself idles at a few hundred MB. |
 | **Model machine** | An **Apple Mac mini with an M5 Pro chip and 64 GB of unified memory**, running Ollama. It answers model calls over the home network. |
-| **Standby** | The older **24 GB Mac mini** that ran the brain first. It holds the same model and is kept ready as a manual fallback (automatic failover is designed, not built). |
-| **Model** | **Google Gemma 4 12B**, instruction-tuned, 4-bit (`gemma4:12b-it-q4_K_M` in Ollama) |
-| **Model settings** | Thinking off · JSON-schema output · about 60 tokens per reply · 4K context · temperature 0.8 · kept loaded while anyone is online |
+| **Standby** | The older **24 GB Mac mini** that ran the brain first, kept ready as a manual fallback (automatic failover is designed, not built). |
+| **Model** | **Google Gemma 4 26B** (`gemma4:26b-a4b` in Ollama), a mixture-of-experts model with about 4B parameters active per word. Live since November 2026; before that Gemma 4 12B, 4-bit (`gemma4:12b-it-q4_K_M`). |
+| **Model settings** | Thinking off · JSON-schema output · about 60 tokens per reply · 4K context · temperature 0.8 · kept loaded for a day at a time |
 
-**How fast?** In the trials on the current machine, a typical reply took **1.5 seconds**. 95% came in
+**How fast?** On an evening of real play after the switch to the 26B (43 replies), a typical reply took
+**0.65 seconds** and the slowest 1.6 s. Earlier, with the 12B in the trials on the current machine, a typical reply took **1.5 seconds**. 95% came in
 under 2.4 s, and the slowest was 2.6 s. On the older Mac mini the same model took about 2.2 s, and a cold
 start after the model had been unloaded took about 1.4 s on either. Nightly reflection takes about 3.6 s
 per companion.
@@ -117,7 +118,7 @@ for any model, without touching the live shard. Eight models were put through it
 
 | Model | Usable replies (of 34) | Typical reply | Right action (of 22) | What reading the answers showed |
 |---|---|---|---|---|
-| **Gemma 4 12B** ✅ | 32 | 2.5 s | **22** | Sharpest and most in character. Both misses were the brain's own filter, not the model. |
+| **Gemma 4 12B** (chosen then) | 32 | 2.5 s | **22** | Sharpest and most in character. Both misses were the brain's own filter, not the model. |
 | Gemma 3 12B | 34 | 2.5 s | 20 | Wouldn't go home when told |
 | Mistral NeMo 12B | 34 | 1.8 s | 19 | Fastest, but wouldn't go home, and once refused to join |
 | Qwen 3.5 9B | 34 | 2.2 s | 20 | Vivid; refused "wait" and "go home" once each |
@@ -126,10 +127,10 @@ for any model, without touching the live shard. Eight models were put through it
 | Phi-4 14B | 33 | 2.8 s | **22** | Broke the fiction ("no smartphones in our world") and went along with a false promise |
 | gpt-oss 20B | 1 | — | 0 | A reasoning model: it spent its whole reply budget thinking |
 
-**Next candidate:** a larger model, Gemma 4 26B (a mixture-of-experts model with about 4B parameters
-active per word). In trials it read NPC moods noticeably better: 62–65% of moods recognisable, against
-54–55% for the 12B. But it also invented reasons for moods more often. It will only replace the 12B after
-a full trial of its own.
+**The switch to the 26B:** Gemma 4 26B (a mixture-of-experts model with about 4B parameters active per
+word) read NPC moods noticeably better in trials: 62–65% of moods recognisable, against 54–55% for the 12B.
+It also invented reasons for moods more often, which is why replies are checked for invented excuses (see
+[Mood](#10-mood)). It replaced the 12B in November 2026 after a full trial of its own.
 
 ## 3. One conversation, start to finish
 
@@ -149,7 +150,7 @@ sequenceDiagram
     Brain->>Brain: build prompt: persona + lore + memory + relationship + news<br/>(player's words passed as data)
     Brain->>Model: chat, JSON-schema output
     Model-->>Brain: { say, action }
-    Brain->>Brain: checks: era · decency · names · promises (one retry)
+    Brain->>Brain: checks: era · decency · names · mood excuses · repeats (one retry)
     Brain-->>Gate: reply
     Gate->>Shard: still near? still alive? action allowed?
     Shard-->>Player: NPC speaks (and acts, if allowed)
@@ -180,9 +181,13 @@ The details that keep it safe:
   (look-alike letters normalised first) gets one retry, then a fixed line. A player line that trips the
   list gets a fixed reply with no model call and is kept out of memory. The aim is to police the *AI*, not
   the players. Logs keep a category and a fingerprint, never the words.
-- **No promises.** Every NPC is told it owes nobody money and never agreed to pay anyone, so a player can't
-  talk an innkeeper into "you said you'd give me 500 gold". *(Test build: a stronger guard that spots a
-  claimed promise and rewrites a reply that gives in.)*
+- **No money promises that stick.** Talk about money is kept out of what an NPC remembers from earlier
+  conversations, so a player can't build up a claimed debt over several visits ("you said you'd give me 500
+  gold"). This replaced an earlier always-on "you owe nobody money" line in every prompt. The filter works
+  from word families, so it is best-effort, not a guarantee. A stronger guard that spots a claimed promise in
+  the moment was built and tested, but is shelved for now.
+- **No samey replies.** A reply that opens like another NPC's recent reply, or repeats a phrase this NPC
+  already used with this player, is asked for once more and kept only if it comes back fresh.
 - **Shop words still work.** `vendor buy`, `bank`, `stable` and the other real keywords go to the game,
   not the AI. A buy/sell line that names nobody nearby is treated as conversation.
 
@@ -193,8 +198,11 @@ In a busy tavern, the shard has to decide who a line is for before any model is 
 - **By name.** One shared resolver checks for an exact name, then a near miss: one letter off for names of
   4+ letters, two for 7+. Near misses never match ordinary dictionary words and only work close by. If two
   NPCs match equally, nobody answers rather than the wrong one.
-- **Without the name.** A townsperson answers if you were already talking (a 45-second window), or if they
-  are the nearest within a few tiles. A companion answers if it travels with you, is close, and no
+- **Without the name.** Once you talk to someone, they hold the conversation: a line that names nobody goes
+  to them while they are within 8 tiles and you have spoken in the last 5 minutes. Naming someone else hands
+  it over; "goodbye", walking off or silence ends it. A plain order to your own companion (follow, wait, go
+  home) still goes to the companion. The lock lives in memory only, so a restart forgets it. With no
+  conversation going, a townsperson answers if they are the nearest within a few tiles. A companion answers if it travels with you, is close, and no
   townsperson is nearer.
 - **Not at all.** Real game commands, anything starting with `[`, and lines meant for another NPC
   ("Mirabel, …") never reach the wrong NPC.
@@ -265,6 +273,8 @@ the model machine has nothing else loaded), the brain lets companions **reflect*
 - A newer belief on the same topic replaces the older one. A belief whose evidence is rolled back dies with
   it.
 - At most two beliefs are offered to the model in any one conversation.
+- An answer that is cut off or malformed stores nothing and is tried again later; after a few failures the
+  batch is set aside, and can be put back in the queue once the cause is fixed.
 
 ## 7. Personality: a fixed core that can still grow
 
@@ -352,7 +362,7 @@ flowchart LR
 
 ## 10. Mood
 
-*Test build; not live yet.*
+*Live since November 2026.*
 
 Every NPC has one mood for the day, the same for everyone who talks to them. It comes from two hidden
 scores, **cheer** and **energy**, worked out from:
@@ -364,7 +374,13 @@ scores, **cheer** and **energy**, worked out from:
 Insults don't move it, so players can't grief an NPC's day. The model is given **one mood word**, because
 trials showed models ignore numbers. Code adds the occasional small action and changes how likely a greeting
 is to come with gossip. A dedicated check stops a bad mood from turning into invented refusals ("I'm too
-tired to sell you bread").
+tired to sell you bread"): it asks once more, then cuts the bad part or falls back to a plain line.
+
+**Natures.** Every ordinary townsperson also gets a **nature** (one of 64: warm, quiet, odd, grumpy,
+haughty, know-it-all…), a speech habit and a pet subject. It is picked from the NPC's stable AI identity,
+so nothing is stored and the same NPC is always the same person. About one in six natures is prickly and may
+toss a mild, in-character jab, but still trades and never threatens. A nature also nudges where that NPC's
+mood usually rests, or how widely it swings. Named characters keep their own hand-written personas.
 
 ## 11. Gifts and likes
 
@@ -487,15 +503,16 @@ Avallónë also tunes the game itself. Each rule is a setting in `AvalloneRules`
 
 ## 17. Testing and review
 
-- **Tests:** about 180 C# tests for the Avallónë code inside a shard suite of about 1,640, and about 350
-  brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
+- **Tests:** about 190 C# tests for the Avallónë code inside a content test suite of about 1,650, and about
+  400 brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
   revision; it needs the private history, so it is not in the public copy.
 - **Model trials:** a harness replays fixed conversations against candidate models, measuring speed and
   checking persona, era and refusal behaviour, before any model change.
 - **Soak tests:** deliberate failure runs (model machine unplugged, slow replies, restarts mid-conversation)
   on both the brain and in game.
-- **Two-step review:** every design and every change bound for the live shard gets an independent review
-  (by a second AI, Codex) before it goes live. Each finding is either fixed or answered.
+- **Two-step review:** designs and changes bound for the live shard get an independent review (by a second
+  AI, Codex), normally before they go live; a few small changes have gone live on the owner's call before
+  their review round. Each finding is either fixed or answered.
 - **Canary first:** live changes go out with a runbook, a backup and a rollback, and get checked in play.
 
 ## 18. A worked example
@@ -511,6 +528,6 @@ is behind the bar. Earlier in the week Wren tamed a white wyrm, and the story ha
 | Wren: "Evening, Hale. Anything worth hearing?" | The resolver matches "Hale". It isn't a game keyword. The request goes to the gateway at conversation priority. |
 | Brain builds the prompt | Persona (sample) · town lore · Wren's cards ("has a mule called Pip") · dials: familiarity *regular*, warmth *friendly*. Trust: good karma gives a high base, but the glow is above Hale's personal line, so he's spooked and trust drops to *warming*. News: one live story, with Wren's name as a token. |
 | Model replies | `{ "say": "Moons like these make a man check his door twice. They say ⟨tok⟩ brought a white wyrm to heel up north. Your work?", "action": "none" }` |
-| Brain checks | Era ✓ · decency ✓ · the only name is the token ✓ · no promise ✓ |
+| Brain checks | Era ✓ · decency ✓ · the only name is the token ✓ · no invented excuse ✓ · not a repeat ✓ |
 | Shard | Fills in "Wren", confirms Wren is still at the bar, and Hale says it overhead. |
 | Later | The visit adds to familiarity. Nothing about the rumour is stored, and the story keeps travelling and fading on its own. |

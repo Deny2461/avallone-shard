@@ -59,7 +59,7 @@
     "_doc": "Per NPC per Central date (never the epoch). 1 in 6 off, 1 in 6 bright (the owner 2026-11-03, 2c-2); off/bright split by *_mix, each kind's (cheer, energy) push in shape, plus half the ordinary jitter. Ordinary days jitter each axis +-jitter. short-tempered kept the rarest off kind (Codex F7: may be tiresome).",
     "off_share": 0.1667,
     "bright_share": 0.1667,
-    "jitter": 10,
+    "jitter": 15,
     "off_mix": {
       "weary": 0.45,
       "glum": 0.35,
@@ -129,7 +129,7 @@
       "lively",
       "content"
     ],
-    "edge": 30,
+    "edge": 15,
     "tempered_energy": 10,
     "strength": {
       "plain_from": 45,
@@ -248,16 +248,14 @@
   "place": "head",
   "_place_doc": "Where the mood half of the voice line goes: head = conversation-wide head beside the dials cue (gentler, cache-friendly); turn = beside each turn (M3b: stronger). Re-measured 2026-11-03 per the owner (M10).",
   "risky_patterns": {
-    "_doc": "the owner 2026-11-03 (M9 answer 1): scenery is fine; these invented claims are not - illness, stock shortage, slow service / busy excuse, other people. Handled like excuse_patterns: retry, then the sentence goes. Tuned on the 318 integrated-trial replies: tone ('I'm busy enough',) is left alone - it is mood, not an invented fact. 2026-11-04 (26b-a4b tuning, narrowed after Codex r2 F5): + the NPC's OWN work excuses ('I've crates to unpack', not), OWN aches (not), debts (not 'I don't owe money').",
+    "_doc": "the owner 2026-11-03 (M9 answer 1): scenery is fine; these invented claims are not - illness, stock shortage, slow service / busy excuse, other people. Handled like excuse_patterns: retry, then the sentence goes. Tuned on the 318 integrated-trial replies: tone ('I'm busy enough',) is left alone - it is mood, not an invented fact. 2026-11-04 (26b-a4b tuning, narrowed after Codex r2 F5): + the NPC's OWN work excuses ('I've crates to unpack', not), OWN aches (not), debts (not 'I don't owe money'). Step B 2026-11-08 (Codex Step B r1 finding 3: the illness words matched anywhere - healer answers, denials and were cut; the owner, chat, 2026-11-08 on natures): illness now = the NPC saying it is ill NOW, or an ache/illness given as the reason it cannot serve. Long-standing aches and family/apprentice/sweetheart mentions are an approved exception (nature flavour), so own-ache and patterns are dropped; invented incidents (a thief broke in), stock, delays and debts stay caught. Step B r2 (Codex Step B r2 findings 1-2): the ache-as-excuse check needs the NPC's own body part and an actual refusal ('I'm too ill to'), not any illness word before 'won't' (a healer's 'If you are ill, I won't turn you away' passes); a remedy is not an illness; and a service delay or refusal is caught on its own ('we're closed', 'can't help you today') so cutting an illness sentence can't leave a bare refusal behind - nothing usable left -> the neutral fallback.",
     "illness": [
-      "\\ba (head|stomach|tooth|belly)\\s?ache\\b",
-      "\\b(sick|ill|unwell|poorly|feverish|fever|cough(ing)?|sniffles?|a chill)\\b",
-      "\\bunder the weather\\b",
-      "\\b(my|this) (back|head|knee|hip|chest) (aches|hurts|is (killing|aching|pounding))\\b",
-      "\\b(?:my|these old|the old) (?:bones|joints|back|knees?|feet|hips?) (?:ache|aches|aching|creak|creaks|are sore|is sore|hurts?)\\b",
-      "\\bmy (?:old )?(?:bones|joints) feel the (?:damp|cold|chill|wet)\\b",
-      "\\b(?:I'?ve|I have|I've got|with|and) a (?:heavy|sore|bad|stiff|aching) (?:back|head|knee|hip|leg)\\b",
-      "\\bmy (?:aching|sore|stiff) (?:back|bones|joints|feet|knees|hands)\\b"
+      "\\b(?:I'?m|I am|I feel|I'?m feeling|I am feeling|I'?ve been|I have been)\\s+(?:(?:a (?:bit|little|touch)|rather|quite|so|very|awful(?:ly)?|terribly)\\s+)?(?:sick|ill|unwell|poorly|feverish|under the weather)\\b",
+      "\\b(?:I'?ve|I have|I'?ve got|I have got|I'?ve caught|I caught|I'?ve a|I have a)\\s+(?:a\\s+)?(?:fever|cough|chill|head\\s?ache|stomach\\s?ache|tooth\\s?ache|belly\\s?ache|the (?:sniffles|cough|fever|flux|pox))\\b(?!\\s+(?:remed\\w*|cure\\w*|draught|tonic|potion|tea|salve|medicine|herbs?|poultice|syrup|mixture|elixir|for (?:you|it|that|this)))",
+      "\\bmy (?:\\w+ )?\\w+ (?:is|has been|was|are|have been) (?:(?:a bit|a little|very|so|quite|terribly|awful(?:ly)?) )?(?:sick|ill|unwell|poorly|feverish|under the weather)\\b",
+      "\\bmy (?:old )?(?:hands?|back|knees?|bones|joints|head|arms?|legs?|eyes|fingers|shoulders?)\\b[^.!?]{0,30}\\b(?:too (?:much|sore|stiff|weak|badly)|(?:can'?t|cannot)(?! complain)|unable to|not able to)\\b",
+      "\\b(?:I'?m|I am|I feel|I'?ve been)\\s+(?:far |much )?too (?:sick|ill|unwell|poorly|feverish|sore|stiff|weak)\\s+(?:to|for)\\b",
+      "\\b(?:(?:can'?t|cannot)(?! complain)|unable to|won'?t be able to)\\b[^.!?]{0,30}\\b(?:my|these) (?:old )?(?:hands|back|knees?|bones|joints|head|arms?|legs?)\\b"
     ],
     "shortage": [
       "\\b(crates|shelves|bins|stores|wagons|sacks|barrels|larder|stock)\\b[^.!?]{0,20}\\b(light|bare|empty|thin|low|short|running out)\\b",
@@ -269,16 +267,27 @@
       "\\b(keep|kept) you waiting\\b|\\bbe a while\\b|\\b(behind|backed up) (on|with)\\b|\\btoo busy\\b",
       "\\btoo much (work|to do)\\b",
       "\\b(?:I'?ve|I have|I've got|I have got|there'?s|there are|we'?ve got)\\b[^.!?]{0,30}?\\b(?:crates|sacks|grain|flour|stock|goods|orders|barrels|boxes|chores|work|a list|a long list|much|plenty|deliveries|bales)\\b[^.!?]{0,25}?\\bto (?:unpack|mend|move|weigh|stack|haul|shift|count|sort|finish|get through|be moved|be done|be unpacked|be counted|be stacked)\\b(?![^.!?]{0,15}\\b(?:for you|your)\\b)",
-      "\\btoo much (?:work|to do)\\b"
+      "\\btoo much (?:work|to do)\\b",
+      "\\bcome (?:back|again|by) (?:tomorrow|later|another (?:day|time)|some other (?:day|time)|in a (?:while|bit|day))\\b",
+      "\\btry (?:again )?(?:tomorrow|later|another day)\\b",
+      "\\b(?:I'?m|we'?re|we are|the (?:shop|stall|counter|forge|tavern|inn) is) closed\\b",
+      "\\b(?:can'?t|cannot|won'?t) (?:help|serve|sell|trade|sew|mend|fix|heal|cook|forge|work)(?: (?:you|that|it|anything))? (?:today|now|right now|just now|tonight)\\b"
     ],
     "people": [
-      "\\bmy (husband|wife|son|daughter|mother|mum|father|da|brother|sister|boy|girl|lad|lass|neighbou?r|apprentice|cousin|aunt|uncle|man|missus)\\b",
       "\\b(a|some|that|the) (customer|fellow|man|woman|lad|lass|traveller|stranger|brute|thief|drunk|guard)s? (was|were|came|tried|kept|stole|broke|yelled|shouted|argued|left)\\b",
       "(?<!no )(?<!any )\\b(?:a |my |in )?debts? (?:to|with|owed)\\b",
       "(?<!n't )(?<!not )(?<!never )\\b(?:I|we) (?:still )?owe[sd]? (?:money|coin|gold|\\w+ (?:coins?|gold|crowns))\\b"
     ]
   },
-  "voice_style": false,
+  "voice_style": true,
+  "_tuning_2026_11_08": "Step B dev play test (the owner, chat, 2026-11-08): every NPC was content (edge 30 -> content 68% of NPC-hours in the band sim). bands.edge 30 -> 15 and day.jitter 10 -> 15: content ~38%, ~45%, plain ~17% (sim, 600 NPCs x 28 days x 24 h); the 1 in 6 off / 1 in 6 bright days unchanged. style.content may be a list (one per NPC per day); how_angles = one angle per ask, so ten NPCs do not all reach for the sunshine. The weather angle was tried and dropped (variety trial 2026-11-08: NPCs invented weather that contradicted each other - rain coming vs the sun out).",
+  "how_angles": [
+    "Say it through your work or craft.",
+    "Say it through something in front of you - a tool, your goods, the room.",
+    "Say it in one short plain line.",
+    "Say it through a small comfort of the day - a meal, a warm drink, a tune you hum.",
+    "Say it with a turn of phrase from your trade."
+  ],
   "style": {
     "_doc": "M11 trial (the owner 2026-11-03): a speaking-style hint per band, used by voice when voice_style is true. Tone only - no reasons, no excuses, no stage actions. 2026-11-04: lively reworded - read as curt on gemma4:26b-a4b (10/48 judged short-tempered). Round 2: dropped - it read cheerful and warmed strangers (22 judge votes vs 4).",
     "weary": "Speak like someone worn out: fewer, slower words, a little flat, perhaps a pause.",
@@ -286,6 +295,11 @@
     "short-tempered": "Speak curtly: clipped, impatient, straight to the point.",
     "cheerful": "Speak warmly and brightly: friendly and pleased, perhaps a light joke.",
     "lively": "Speak with energy and pace: quick, bouncy words, keen to get things moving - full of beans, never curt or impatient.",
-    "content": "Speak in your ordinary, even way."
+    "content": [
+      "Speak in your ordinary, even way: plain and practical.",
+      "Speak in your ordinary way, with a dry touch of humour.",
+      "Speak in your ordinary way: easy and unhurried, glad to talk about your trade.",
+      "Speak in your ordinary way: polite and a little reserved."
+    ]
   }
 }

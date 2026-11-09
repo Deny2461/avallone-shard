@@ -29,8 +29,12 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
   answers in character, in the Samurai Empire era, in a sentence or two.
 - **Every shopkeeper has a voice.** Ordinary townsfolk answer too, through one shared townsperson persona.
   Real shop words still work as normal (`vendor buy`, `bank`, `stable`).
-- **You don't have to say their name.** If you are already talking with someone, or they are the nearest
-  person, they know you mean them.
+- **You don't have to say their name.** Once you start talking with someone, lines that name nobody keep
+  going to them until you name someone else, say goodbye, walk away or go quiet for a few minutes. With no
+  conversation going, the nearest person answers.
+- **Townsfolk are not all alike.** Every ordinary NPC has a nature of its own (one of 64), a speech habit and
+  a pet subject, and one mood for the day that is the same for everyone who talks to them. About one in six
+  is prickly and may toss you a mild, in-character jab.
 - **A companion travels with you.** A permanent companion can be recruited, follows you, fights beside you,
   heals you and rides with you. It starts out wary. Trust is earned over days of real play, and with trust
   come stories it would not tell a stranger.
@@ -70,8 +74,8 @@ and keeps long-term memory in SQLite.
 | Service, prompts, filters | `brain.py` |
 | Memory | `memory.py` (event ledger), `reflection.py` (beliefs), `cards.py` + `concepts.json` + `memory_rules.json` (structured memory), `named.py` |
 | Rumours and small talk | `rumours.py`, `rumour_speech.py`, `smalltalk.py` (+ their `.json` data) |
-| Relationships, mood, moons | `dials.py` + `dials.json`, `mood.py` + `mood.json` |
-| Guards | `decency.py`, `promises.py`, `shop_hint.py` |
+| Relationships, mood, natures, moons | `dials.py` + `dials.json`, `mood.py` + `mood.json`, `nature.py` + `nature.json` |
+| Guards | `decency.py`, `shop_hint.py`, `variety.py` (repeat catcher) |
 | Personas | `personas/` (sample personalities) |
 | Knowledge | `lore.py`, `companion_secrets.py` (the code only; the secret text lives outside the repository) |
 | Trials | `model_trial.py`, `speed_trial.py` (model checks against the real request path) |
@@ -80,9 +84,9 @@ and keeps long-term memory in SQLite.
 
 - `Distribution/Data/Avallone/`: companion home spots, gift likes, extra spawners, turning-point rules
   (sample) and the word list used for name matching.
-- `Projects/UOContent.Tests/Tests/Avallone/`: about 180 C# tests across 26 files. The full shard suite runs
-  about 1,640 tests.
-- `brain/test_*.py`: about 350 Python tests across 22 files. Run them **one file at a time**. A
+- `Projects/UOContent.Tests/Tests/Avallone/`: about 190 C# tests across 27 files. The shard's content test
+  suite runs about 1,650 tests.
+- `brain/test_*.py`: about 400 Python tests across 27 files. Run them **one file at a time**. A
   single-process run of all of them has known cross-file leakage.
 
 ## Running it, in outline
@@ -101,8 +105,10 @@ This is a personal project, not a packaged product, so expect to read code. The 
 With the brain switched off or unreachable, the shard plays as ordinary Ultima Online. That is by design.
 
 **Hardware, for scale:** the shard and brain share a 2-core, 4 GB Linux container. The model runs on an
-Apple Mac mini (M5 Pro, 64 GB). The model is Gemma 4 12B at 4-bit, which also ran fine on an older 24 GB
-Mac mini. A typical NPC reply takes about 1.5 seconds. Details, and how the model was chosen:
+Apple Mac mini (M5 Pro, 64 GB). The model is Gemma 4 26B, a mixture-of-experts model with about 4B
+parameters active per word (since November 2026; before that Gemma 4 12B at 4-bit, which also ran fine on
+an older 24 GB Mac mini). On an evening of real play, a typical NPC reply took about 0.65 seconds. Details,
+and how the model was chosen:
 [DESIGN.md](DESIGN.md#what-it-runs-on).
 
 ## Glossary
@@ -131,7 +137,8 @@ Mac mini. A typical NPC reply takes about 1.5 seconds. Details, and how the mode
 - *Ultima Online* is a trademark of Electronic Arts. This is an unofficial fan project. It contains no
   client data, and you need your own.
 - Built by the shard's owner working with AI coding assistants: Claude (Anthropic) writing most of the code
-  and documents, and Codex (OpenAI) reviewing the designs and changes before anything went live.
+  and documents, and Codex (OpenAI) independently reviewing the designs and changes, normally before they
+  went live (a few small changes went live on the owner's call before their review round).
 - The conversation runs on open-weight models served locally through Ollama.
 - The decency filter's real word list is kept private. This copy has a short placeholder list
   (`brain/decency_terms.json`) so the code runs.

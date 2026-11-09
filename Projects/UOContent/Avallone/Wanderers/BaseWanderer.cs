@@ -652,9 +652,12 @@ public abstract partial class BaseWanderer : BaseCreature
 
         // Named; or, unnamed, the player is right next to him and the line isn't meant for someone else
         // (the owner, chat, 2026-10-14: don't).
+        // Step B: while the player is talking to someone (Conversation), a line naming nobody is that partner's - his
+        // from anywhere in hearing if he is the partner, nobody's here if someone else is.
         var named = IsNamed(from, text);
-        if (!named && (!from.InRange(this, NextToRange) || TownsfolkTalk.NamesSomeoneNearby(from, text, this) ||
-                       BaseCompanion.IsTalkingToCompanion(from, text)))
+        var partner = Conversation.Partner(from);
+        if (!named && (TownsfolkTalk.NamesSomeoneNearby(from, text, this) || BaseCompanion.IsTalkingToCompanion(from, text) ||
+                       (partner != null ? partner != this : !from.InRange(this, NextToRange))))
         {
             return;
         }
@@ -666,6 +669,7 @@ public abstract partial class BaseWanderer : BaseCreature
         }
 
         _nextHeard[from] = now + PerPlayerCooldown;
+        Conversation.Note(from, this, text);   // Step B: the conversation lock
         _ = RespondAsync(from, text);
     }
 

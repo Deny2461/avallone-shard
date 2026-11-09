@@ -111,6 +111,7 @@ public static class TownsfolkTalk
             }
 
             shop.FocusMob = from;
+            Conversation.Note(from, shop, text);   // Step B: the conversation lock
             return;
         }
 
@@ -135,7 +136,8 @@ public static class TownsfolkTalk
             return;
         }
 
-        if (MirabelNearby(from) && !IsTownsperson(NameResolver.Resolve(from, text).Winner))
+        if (MirabelNearby(from) && !IsTownsperson(NameResolver.Resolve(from, text).Winner) &&
+            !IsTownsperson(Conversation.Partner(from)))   // Step B: talking to a townsperson by her, it is theirs
         {
             Skip(from, text, "Mirabel is within 4 tiles");
             return;
@@ -156,6 +158,7 @@ public static class TownsfolkTalk
         }
 
         _nextHeard[from] = now + PerPlayerCooldown;
+        Conversation.Note(from, npc, text);   // Step B: the conversation lock
         if (GameCommands.AnyTrade(e.Keywords))
         {
             e.Handled = true;   // a buying question answered by the AI: a named shopkeeper does not also open its window
@@ -339,9 +342,9 @@ public static class TownsfolkTalk
 
     // Named (exact) > named (close spelling) > already talking with this player > the nearest one within 4 tiles.
     // Only ever one answers.
-    private static BaseCreature PickListener(Mobile from, string text, DateTime now)
+    public static BaseCreature PickListener(Mobile from, string text, DateTime now)   // public for tests
     {
-        BaseCreature talking = null, nearest = null;
+        BaseCreature nearest = null;
         var nearestDist = double.MaxValue;
 
         // Named (exactly or close enough) by the one resolver: that townsperson, or - if the name is someone else's or
@@ -357,6 +360,14 @@ public static class TownsfolkTalk
             return IsTownsperson(resolved.Winner) ? (BaseCreature)resolved.Winner : null;
         }
 
+        // Step B (the owner, chat, 2026-11-08): the conversation lock. A line naming nobody is the partner's - this
+        // townsperson's, or (Mirabel, a companion, a wanderer) no townsperson's at all.
+        var partner = Conversation.Partner(from);
+        if (partner != null)
+        {
+            return IsTownsperson(partner) ? (BaseCreature)partner : null;
+        }
+
         foreach (var m in from.GetMobilesInRange(HearRange))
         {
             // No line-of-sight test: it fails across bank and shop counters (verified 2026-10-02, diagnostic log).
@@ -367,12 +378,6 @@ public static class TownsfolkTalk
 
             var bc = (BaseCreature)m;
 
-            if (from.InRange(bc, NearestRange) &&
-                _talks.TryGetValue((bc.Serial, from.Serial), out var t) && now - t.Last < ConversationWindow)
-            {
-                talking ??= bc;
-            }
-
             var d = from.GetDistanceToSqrt(bc);
             if (d <= NearestRange && d < nearestDist)
             {
@@ -381,7 +386,7 @@ public static class TownsfolkTalk
             }
         }
 
-        return talking ?? nearest;
+        return nearest;   // Step B: no partner -> the nearest (the old 45 s window is the token's job now)
     }
 
     // Close spellings count as the name (the owner, chat, 2026-10-02): same first 3 letters, or 1-2 letters off.
@@ -468,20 +473,13 @@ public static class TownsfolkTalk
         return prev[b.Length];
     }
 
-    // For companions: is this player mid-conversation with a townsperson? Then an unnamed line is theirs.
-    public static bool InConversation(Mobile player)
-    {
-        var now = Core.Now;
-        foreach (var ((_, p), t) in _talks)
-        {
-            if (p == player.Serial && now - t.Last < ConversationWindow)
-            {
-                return true;
-            }
-        }
+    // Tests: as if this townsperson had just answered this player (the old 45 s window's record).
+    public static void NoteTalkForTests(BaseCreature npc, Mobile player) =>
+        _talks[(npc.Serial, player.Serial)] = new Talk { Last = Core.Now };
 
-        return false;
-    }
+    // For companions: is this player mid-conversation with a townsperson? Then an unnamed line is theirs.
+    // Step B (Codex r1 finding 2): the conversation token decides, not the old 45 s window (which outlived a farewell).
+    public static bool InConversation(Mobile player) => IsTownsperson(Conversation.Partner(player));
 
     // The persona vars a townsperson's request carries (also [Named why], so its numbers match the conversation's).
     internal static Dictionary<string, string> PersonaVarsFor(BaseCreature npc) => new()

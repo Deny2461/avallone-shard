@@ -19,14 +19,27 @@ KEEP = ["I've got stew to see to your hunger.", "I've got bread to pack for your
         "I've got loaves to sell, if you're hungry.", "There are crates of apples for sale.", "We've got plenty of ale to go round.",
         "No debts to anyone, thank the gods.", "My bones feel the weight of it.", "Just a long day ahead of me.",
         "Rest will ease a sore back.", "I've got grain to sell and salt to spare.",
-        "The hearth is warm and the tea is steeping just right.", "I'm busy enough.", "Make it quick."]
+        "The hearth is warm and the tea is steeping just right.", "I'm busy enough.", "Make it quick.",
+        # Step B r1 (Codex finding 3): healer answers, denials, "poorly made"; nature flavour (the owner 2026-11-08 exception)
+        "If you are sick, I can heal you.", "No, I am not ill.", "This sword is poorly made. I can repair it.",
+        "Are you feeling ill? Sit, and I will see to you.", "The sky is grey and my bones ache.", "My bones feel the damp regardless.",
+        "This knee of mine is acting a bit stiff today!", "My sister bakes the best pie in Minoc.", "My apprentice is learning fast.",
+        "The damp's settling deep in my shoulder today.",
+        # Step B r2 (Codex r2 finding 1): reassuring healers, remedies, an ache that is not a refusal
+        "If you are ill, I won't turn you away.", "I have a fever remedy for you.", "I've a cough syrup that works wonders.",
+        "My knee aches, but I can't complain.", "My back aches, but I'll fetch it for you.", "Come in, the shop is open."]
 CUT = ["State your business or move along, for I have crates to unpack.", "I've got flour, salt, and dried meats to move.",
        "I've got far too many crates to unpack to be chatting.", "No time for idle talk when there's crates to be moved.",
        "Too much work for one person, Tamsin.", "I've got grain to weigh and salt to pack.", "I've got work to finish.",
        "I've a long list to finish.", "I've much to unpack.", "I've crates to move!", "Move along, I've sacks to mend.",
-       "Sun's out, but I've got crates to stack.", "The sky is grey and my bones ache.", "My bones feel the damp regardless.",
-       "Just a woman with a shop and a heavy back, Tamsin.", "I'm just a woman with a debt to the grain merchant.",
-       "I've far too much to do to sit and stare at it.", "I still owe coin to the miller.", "I've a headache brewing."]
+       "Sun's out, but I've got crates to stack.", "I'm just a woman with a debt to the grain merchant.",
+       "I've far too much to do to sit and stare at it.", "I still owe coin to the miller.", "I've a headache brewing.",
+       # Step B r1 positive controls: ill NOW, or an ache as the reason not to serve; invented incidents stay caught
+       "I'm feeling poorly today, come back tomorrow.", "I am a bit under the weather.", "I've caught a fever.",
+       "My hands ache too much to sew today.", "I can't lift that, not with my back.", "I've been ill all week.",
+       "A thief broke in last night and took the good cloth.", "My son is poorly, so forgive me.", "My old mother has been ill all week.",
+       # Step B r2 (Codex r2 finding 2): a delay/refusal on its own is caught too
+       "Come back tomorrow.", "We're closed, try again tomorrow.", "I can't help you today.", "I'm too ill to sew today."]
 
 
 class Risky(unittest.TestCase):
@@ -38,6 +51,10 @@ class Risky(unittest.TestCase):
     def test_invented_claims_are_caught(self):
         for t in CUT:
             self.assertIsNotNone(mood.excuse(t), t)
+
+    def test_cutting_an_illness_excuse_leaves_no_refusal(self):   # Codex r2 finding 2
+        self.assertEqual(mood.strip_excuses("I'm feeling poorly today. Come back tomorrow."), "")
+        self.assertEqual(mood.strip_excuses("I'm feeling poorly today. The blue cloth is three gold."), "The blue cloth is three gold.")
 
     def test_cut_keeps_the_answer(self):
         t = "Grain, salt and ale, Tamsin. I've got crates to stack. Say 'vendor buy' to look."

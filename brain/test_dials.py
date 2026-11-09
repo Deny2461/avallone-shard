@@ -332,6 +332,25 @@ class GossipHold(unittest.TestCase):
         self.assertIsNone(dials.holds_gossip(self.d(3), "greet"))      # "by sight"
         self.assertIsNone(dials.holds_gossip(self.d(0), "news"))
 
+    def test_stranger_pass_lets_a_greeting_hint_through(self):   # Step B (the owner, 2026-11-08)
+        self.assertIsNone(dials.holds_gossip(self.d(0), "greet", stranger_pass=True))
+        self.assertIn("wary", dials.holds_gossip(self.d(0, trust=-21), "greet", stranger_pass=True))   # wary still holds
+        self.assertIn("cool", dials.holds_gossip(self.d(0, warmth=-21), "greet", stranger_pass=True))  # cool still holds
+
+    def test_stranger_rate_is_one_sixth(self):
+        import random
+        import mood
+        self.assertAlmostEqual(dials.greet_scale(self.d(2)), 0.1667)
+        self.assertEqual(dials.greet_scale(self.d(3)), 1.0)
+        self.assertEqual(dials.greet_scale(None), 1.0)
+        m = {"band": "content"}
+        base = mood.greet_percent(m)
+        rng, n = random.Random(7), 60000
+        known = sum(mood.greet_draw(m, rng) for _ in range(n)) / n * 100
+        stranger = sum(mood.greet_draw(m, rng, scale=dials.greet_scale(self.d(1))) for _ in range(n)) / n * 100
+        self.assertAlmostEqual(known, base, delta=0.6)            # positive control: the normal rate
+        self.assertAlmostEqual(stranger, base / 6, delta=0.35)    # ~1/6 of it
+
     def test_wary_holds_everything_asked_or_not(self):
         self.assertIn("wary", dials.holds_gossip(self.d(10, trust=-21), "news"))
         self.assertIn("wary", dials.holds_gossip(self.d(10, trust=-21), "greet"))

@@ -1,5 +1,5 @@
 {
- "version": "2026-11-01a",
+ "version": "2026-11-08a",
  "_note": "Hand-made word list for FINDING memories only (design v1.2 §V1.2, §V1.11 #5). Words map to a concept; concepts have parents. Never used to change a stored fact. Drift swaps and plausibility bounds get their own files in step 2d.",
  "concepts": {
   "ANIMAL": {
@@ -647,8 +647,6 @@
     "fight",
     "fought",
     "battle",
-    "slew",
-    "slain",
     "duel"
    ]
   },
@@ -695,8 +693,7 @@
     "death",
     "funeral",
     "grave",
-    "buried",
-    "killed"
+    "buried"
    ]
   },
   "HOUSE": {
@@ -718,6 +715,25 @@
     "galleon",
     "sail",
     "sailing"
+   ]
+  },
+  "SLAY": {
+   "label": "killing",
+   "parents": [
+    "FIGHT",
+    "DEATH"
+   ],
+   "words": [
+    "kill",
+    "kills",
+    "killed",
+    "killing",
+    "slay",
+    "slays",
+    "slayed",
+    "slaying",
+    "slew",
+    "slain"
    ]
   }
  }

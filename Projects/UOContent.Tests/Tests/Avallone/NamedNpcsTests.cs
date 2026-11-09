@@ -232,7 +232,10 @@ public class NamedNpcsTests : IDisposable
             var reply = AiGateway.RequestAsync(new AiRequest(npc.AiId, AiIdentity.GetOrCreate(p), "mirabel", "hello", AiPriority.Conversation));
             var first = await reply.WaitAsync(TimeSpan.FromSeconds(2));  // the conversation does not wait behind it
             Assert.True(first.Ok);
-            Assert.True(SpinWait.SpinUntil(() => NamedNpcs.Preempted == 1, 2000));
+            // Step B (Codex r1 asked to classify this flake, 2026-11-08): the pre-empted summary bumps Preempted and THEN puts
+            // the job back, on a thread-pool continuation in the test host (on the game thread in the server), so waiting for
+            // the counter alone sometimes read the queue before the re-insert (failed ~half of full-suite runs). Wait for both.
+            Assert.True(SpinWait.SpinUntil(() => NamedNpcs.Preempted == 1 && NamedNpcs.Queued == 1, 2000));
             Assert.Equal(1, NamedNpcs.Queued);                          // retried once later
             Assert.DoesNotContain(_recorded, r => r.Kind == "visit_summary");
             Assert.False(AiGateway.BreakerIsOpen);                      // never counted against conversations

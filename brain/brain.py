@@ -36,14 +36,15 @@ import companion_secrets  # noqa: E402
 import reflection  # noqa: E402
 import rumours  # noqa: E402
 import rumour_speech  # noqa: E402
+import shop_hint  # noqa: E402  (2026-11-04; live Step A 2026-11-06)
 import smalltalk  # noqa: E402
 import named  # noqa: E402
 import cards  # noqa: E402
 import decency  # noqa: E402
 import dials  # noqa: E402  (5c-2 2b)
 import mood  # noqa: E402  (5c-2 2c)
-import shop_hint  # noqa: E402  (2026-11-04)
-import promises  # noqa: E402  (2026-11-04, Codex r2 F1)
+import variety  # noqa: E402  (Step B 2026-11-08: repeat catcher)
+import nature  # noqa: E402  (Step B 2026-11-08: a nature (personality) per ordinary NPC)
 
 CONFIG_PATH = os.environ.get("AVALLONE_BRAIN_CONFIG", "/etc/avallone-brain/config.json")
 
@@ -141,7 +142,7 @@ DEFAULTS = {
     "turn_suffix_chars": 1900,
     "reflection_idle_s": 900,
     "reflection_min_events": 2,
-    "reflection_max_tokens": 320,
+    "reflection_max_tokens": 800,   # Step C 2026-11-09: 320 cut off long evenings (373-444 needed; live config 800 since)
     "reflection_timeout_s": 90,
     "reflection_retry_s": 1800,
     # One-time key corrections, applied at start if not already recorded in the db (idempotent).
@@ -341,6 +342,18 @@ def breaks_frame(say, utterance=""):
     return any(m.group(0).lower() not in heard for m in MODERN.finditer(say))
 
 
+# the owner, chat, 2026-11-04: One always-on line in
+# every NPC's standing instructions: the live 12b agreed to invented debts ~30% of the time in the adversarial trials.
+# The full guard (claim detection + output backstop) was SHELVED 2026-11-06 (the owner: too much effort for an edge case).
+# NO_PROMISES (always-on no-money line, 4668fb71f) removed 2026-11-06 by the §21 memory filter (memory.money_talk).
+
+
+# The whole reply the shard receives (speech + shop line + rumour tease). Speech itself stays capped at 240 by clean().
+# 300 = the dev/2c limit (MOOD_MAX_CHARS). The shard trims whitespace only (SidecarAiClient.cs); live replies already
+# exceed 240 when a tease is added. 2026-11-04, live port of the shop hint (Codex r2 F4).
+REPLY_MAX_CHARS = 300
+
+
 def clean(say, limit=240):
     # Whitespace first (newlines/tabs become spaces), then drop every other control/format character: a NUL cut a
     # line short in ClassicUO and a bidi override flips how it shows (4d soak, 2026-10-20).
@@ -348,6 +361,48 @@ def clean(say, limit=240):
     say = "".join(ch for ch in say if unicodedata.category(ch)[0] != "C")
     say = " ".join(say.split()).strip().strip('"').strip()
     return say[:limit]
+
+
+REWARM_LOCK = threading.Lock()
+
+
+def rewarm_soon():
+    """Move doc §23.2 (2026-11-08): when a reply times out while the model is still loading, Ollama cancels that load
+    ("error loading llama server: context canceled") and the NEXT call pays a cold load too. So after a timeout, one
+    background warm (at most one at a time, never in a quiet window) finishes the load for the next caller."""
+    if in_quiet_window() or not REWARM_LOCK.acquire(blocking=False):
+        return False
+
+    def run():
+        start = time.monotonic()
+        try:
+            ollama_warm(timeout_s=120)
+            log(event="warm", op="after_timeout", outcome="ok", ms=int((time.monotonic() - start) * 1000),
+                model=CFG["model"])
+        except Exception as e:
+            log(event="warm", op="after_timeout", outcome="error", ms=int((time.monotonic() - start) * 1000),
+                error=f"{type(e).__name__}: {e}")
+        finally:
+            REWARM_LOCK.release()
+    threading.Thread(target=run, name="rewarm", daemon=True).start()
+    return True
+
+
+def is_timeout(e):
+    return isinstance(e, (TimeoutError, socket.timeout)) or (
+        isinstance(e, urllib.error.URLError) and isinstance(getattr(e, "reason", None), (TimeoutError, socket.timeout)))
+
+
+def post_by(req, timeout_s):
+    """POST to the model and read the JSON within timeout_s; a timeout starts a background re-warm (rewarm_soon)."""
+    deadline = time.monotonic() + timeout_s
+    try:
+        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
+            return read_json_by(resp, deadline)
+    except Exception as e:
+        if is_timeout(e):
+            rewarm_soon()
+        raise
 
 
 def read_json_by(resp, deadline):
@@ -517,9 +572,7 @@ def ollama_chat(persona, utterance, timeout_s, history=(), nudge=None, knowledge
         data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
     )
-    deadline = time.monotonic() + timeout_s
-    with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-        data = read_json_by(resp, deadline)
+    data = post_by(req, timeout_s)
     content = data.get("message", {}).get("content", "")
     try:
         parsed = json.loads(content)
@@ -629,9 +682,11 @@ def _post_cancellable(url, payload, timeout_s):
         conn.close()
 
 
-def ollama_json(system, user, schema, timeout_s, max_tokens, cancellable=False):
+def ollama_json(system, user, schema, timeout_s, max_tokens, cancellable=False, why=None):
     """One structured, low-temperature call for background work. Raises if the model cannot be reached;
-    returns None if the answer was cut off (ran out of tokens) or is not the JSON asked for."""
+    returns None if the answer was cut off (ran out of tokens) or is not the JSON asked for. Pass a dict as `why` to
+    learn which: why["reason"] = "cut_off" | "bad_json" (Step C, 2026-11-09: both used to read "not the JSON asked for",
+    which hid that Elspeth's long-evening summaries were being cut off at the token limit)."""
     body = {
         "model": CFG["model"],
         "stream": False,
@@ -650,14 +705,16 @@ def ollama_json(system, user, schema, timeout_s, max_tokens, cancellable=False):
     if cancellable:
         data = _post_cancellable(req.full_url, req.data, timeout_s)
     else:
-        deadline = time.monotonic() + timeout_s
-        with urllib.request.urlopen(req, timeout=timeout_s) as resp:
-            data = read_json_by(resp, deadline)
+        data = post_by(req, timeout_s)
     if data.get("done") is False or data.get("done_reason") == "length":
+        if why is not None:
+            why.update(reason="cut_off", tokens=data.get("eval_count"), limit=max_tokens)
         return None
     try:
         return json.loads(data.get("message", {}).get("content", ""))
     except ValueError:
+        if why is not None:
+            why.update(reason="bad_json")
         return None
 
 
@@ -701,6 +758,7 @@ def reflect_tick():
     global REFLECTING
     start = time.monotonic()
     batch = session["events"][0]["event_id"]
+    why = {}   # Step C: filled by ollama_json with why an answer was unusable (cut_off / bad_json)
     REFLECTING = True
     fails = REFLECT_FAILS[key][1] if REFLECT_FAILS.get(key, ("", 0))[0] == batch else 0
     try:
@@ -708,14 +766,14 @@ def reflect_tick():
         summary = reflection.reflect_once(
             LEDGER, session,
             lambda system, user, schema: ollama_json(system, user, schema, CFG["reflection_timeout_s"],
-                                                     CFG["reflection_max_tokens"]),
+                                                     CFG["reflection_max_tokens"], why=why),
             persona_text=persona, mode=CFG["reflection_mode"], model=CFG["model"], frame_check=breaks_frame,
             give_up=fails >= REFLECT_MAX_FAILS - 1)
         REFLECT_FAILS.pop(key, None)
     except reflection.UnusableAnswer as e:   # cut off or malformed: nothing stored, same batch again in 5 minutes
         REFLECT_FAILS[key] = (batch, fails + 1)
         REFLECT_RETRY[key] = time.monotonic() + 300
-        summary = {"outcome": "unusable_answer", "attempt": fails + 1, "error": str(e)}
+        summary = {"outcome": "unusable_answer", "attempt": fails + 1, "error": str(e), **why}
     except Exception as e:
         REFLECT_RETRY[key] = time.monotonic() + CFG["reflection_retry_s"]
         summary = {"outcome": "error", "error": f"{type(e).__name__}: {e}"}
@@ -875,6 +933,10 @@ class Handler(BaseHTTPRequestHandler):
                 persona = load_persona(req["persona_key"])
                 if req.get("persona_vars"):
                     persona = apply_vars(persona, req["persona_vars"])
+                    # Step B (the owner, chat, 2026-11-08): the ordinary NPC's own nature
+                    nat_block = nature.prompt_block(nature.of(npc))
+                    if nat_block:
+                        persona = dict(persona, text=persona["text"] + "\n" + nat_block)
             else:
                 persona = {"key": None, "groups": [], "town": "", "exclude": [],
                            "text": str(req.get("persona") or "")[:4000]}
@@ -925,7 +987,7 @@ class Handler(BaseHTTPRequestHandler):
                 return [], ""
         # v1: as before. v2: looked up last, in whatever room the per-turn cap leaves (below).
         sections, knowledge = ([], "") if v2 else lookup_lore(CFG["lore_budget_chars"])
-        persona = persona["text"] + "\n\n" + promises.STANDING   # Codex r2 F1 v3 (2026-11-04): every NPC, always
+        persona = persona["text"]   # §21 (2026-11-06): NO_PROMISES line removed; money talk is kept out of memory instead
         # Phase 4a2: companions draw on the memory ledger. Ids + reasons are logged, never the memory text.
         memories, mem_used, restored, standing = "", [], False, ""
         mem_cards = []   # 5c-2 2a: card ids offered to a named NPC this turn (returned to the shard, never text)
@@ -1091,12 +1153,15 @@ class Handler(BaseHTTPRequestHandler):
         # 5c-2 2c (M7.6): the ONE greeting-gossip draw, here because the brain knows the mood. Only when the 2c shard
         # says it did not roll (an older shard still rolls 1 in 4 itself - no second gate). A miss = exactly what the
         # shard's own miss was: no rumour block at all this turn.
+        stranger_pass = False
         if rask and str(rask.get("mode") or "") == "greet" and rask.get("greet_unrolled") is True and not v2:
-            pct = mood.greet_percent(md)
-            if not mood.greet_draw(md):
+            scale = dials.greet_scale(dial)   # Step B (the owner, 2026-11-08): a stranger gets 1/6 of the normal rate
+            pct = mood.greet_percent(md) * scale
+            if not mood.greet_draw(md, scale=scale):
                 rask = {}
-            log(event="rumour", op="greet_draw", request_id=rid, npc=npc, percent=pct, hit=bool(rask),
-                mood=md["band"] if md else None)
+            stranger_pass = bool(rask) and scale < 1.0
+            log(event="rumour", op="greet_draw", request_id=rid, npc=npc, percent=round(pct, 2), hit=bool(rask),
+                mood=md["band"] if md else None, stranger=scale < 1.0)
         rumour_context = bool(rask) and not v2 and CFG["rumour_speak"]
         if rumour_context:   # loaded before any branch: the name guard runs on small talk and lore turns too (finding 3)
             roster = [p for p in (rask.get("roster") or []) if isinstance(p, dict)][:500]
@@ -1106,7 +1171,7 @@ class Handler(BaseHTTPRequestHandler):
         news_held = None
         if rask and not v2 and dial is not None:
             try:
-                news_held = dials.holds_gossip(dial, str(rask.get("mode") or ""))
+                news_held = dials.holds_gossip(dial, str(rask.get("mode") or ""), stranger_pass=stranger_pass)
             except Exception as e:
                 log(event="dials", request_id=rid, outcome="error", error=f"hold: {type(e).__name__}: {e}")
         if news_held:
@@ -1127,7 +1192,7 @@ class Handler(BaseHTTPRequestHandler):
         if rask and not v2 and RUMOURS is not None and CFG["rumour_speak"] and not lore_turn and not news_held:
             try:
                 town = RUMOURS.resolve_town(rask.get("town"))
-                held = dials.holds_gossip(dial, str(rask.get("mode") or "")) if dial is not None else None
+                held = dials.holds_gossip(dial, str(rask.get("mode") or ""), stranger_pass=stranger_pass) if dial is not None else None
                 if held:
                     raise LookupError(held)   # 2b: enforced in code, not left to the model (dev trial 2026-11-01)
                 if str(rask.get("mode") or "") == "follow" and \
@@ -1180,11 +1245,6 @@ class Handler(BaseHTTPRequestHandler):
         if rumour_context and offer is None and str(rask.get("mode") or "") == "news":
             situation = (situation + "\n\nIf they ask after someone by name, you have heard nothing of that person: "
                          "say so without repeating the name.").strip()
-        # Codex r2 F1 v2 (2026-11-04): the player claims a promise / debt / deal - tell the model plainly, this turn only,
-        # that none exists (the brain is told of no promises anywhere). The output guard below stays as the backstop.
-        claim = promises.claim_note(utterance) if not reveal_id else ""
-        if claim:
-            situation = (situation + "\n\n" + claim).strip()
         # 5c-2 2b: relationship dials - one plain line beside what holds for the whole conversation. No model call;
         # a problem costs the line, never the reply. Logged as numbers only (no names, no text).
         if dial is not None:
@@ -1194,11 +1254,11 @@ class Handler(BaseHTTPRequestHandler):
                 cue = dials.cue(dial)
                 if md is not None:
                     if mood.place() == "turn":   # M10: beside this turn (stronger) vs with the dials cue (gentler)
-                        situation = (situation + "\n\n" + mood.voice(md)).strip()
+                        situation = (situation + "\n\n" + mood.voice(md, str(npc))).strip()
                     else:
-                        cue = mood.voice(md) + " " + cue
+                        cue = mood.voice(md, str(npc)) + " " + cue
                     if mood.asks_how(utterance):
-                        situation = (situation + "\n\n" + mood.how_block(md)).strip()
+                        situation = (situation + "\n\n" + mood.how_block(md, str(npc), bool(req.get("persona_vars")))).strip()
                 if dials.cfg().get("cue_place") == "situation":   # beside this turn vs the stable head (cache-friendly)
                     situation = (situation + "\n\n" + cue).strip()
                 else:
@@ -1278,39 +1338,38 @@ class Handler(BaseHTTPRequestHandler):
                         say, action = rumour_speech.follow_fallback(offer, utterance), "none"
                     elif why2:
                         raise ValueError(f"filtered twice ({why}/{why2}): {filtered!r} / {say!r}")
-            # Codex r2 F1 (2026-11-04): never agree to a promise / debt / payment the player claims - none exists. One
-            # retry if there is time, then the conceding sentence becomes promises.FALLBACK. Every NPC, not only mood.
-            promise_log = None
-            if not reveal_id and not (binding or "").startswith("decency"):
-                pc = promises.conceded(say, bool(claim))
-                if pc or claim:
-                    promise_log = {"claim": bool(claim)}
-                if pc:
-                    promise_log["conceded"] = pc
+            # Step B (the owner's play test 2026-11-08): a reply that opens like a recent
+            # reply from any NPC, or reuses this NPC's own recent words to this player, is asked for once more. Kept only
+            # if the new one is clean and not a repeat; never on a reveal, a decency line or a gossip turn (the gossip
+            # binding stays as it was). Runs before the mood checks, so a retried reply is checked for excuses too.
+            variety_log = None
+            if not reveal_id and offer is None and not (binding or "").startswith("decency") and say:
+                rep = variety.check(str(npc), str(subject), say)
+                if rep:
+                    variety_log = {"repeat": rep["kind"]}
                     left = timeout_s - (time.monotonic() - start)
-                    retried, a_r = None, action
                     if left >= 1.5:
                         try:
-                            s2, a2 = ollama_chat(persona, model_utt, left, history, nudge=promises.NUDGE,
+                            s3, a3 = ollama_chat(persona, model_utt, left, history, nudge=variety.nudge(rep),
                                                  knowledge=knowledge, situation=situation, actions=actions,
                                                  memories=memories, stats={}, **gen)
-                            s2, w2 = settle(s2)
-                            if not w2:
-                                retried, a_r = s2, a2
+                            s3, w3 = settle(s3)
+                            if s3 and not w3 and not variety.check(str(npc), str(subject), s3):
+                                say, action, variety_log["fixed"] = s3, a3, "retry"
+                            else:
+                                variety_log["fixed"] = "kept"
                         except Exception as e:
-                            promise_log["retry_error"] = type(e).__name__
-                    if retried is not None and not promises.conceded(retried, bool(claim)):
-                        say, action, promise_log["fixed"] = retried, a_r, "retry"
+                            variety_log["retry_error"] = type(e).__name__
                     else:
-                        if retried is not None:
-                            action = a_r
-                        say, promise_log["fixed"] = promises.strip(retried if retried is not None else say, bool(claim)), "cut"
+                        variety_log["fixed"] = "no_time"
+            if not reveal_id and not (binding or "").startswith("decency") and say:
+                variety.note(str(npc), str(subject), say)
             mood_log = None
             if md is not None and not (binding or "").startswith("decency") and not reveal_id:
                 # 5c-2 2c (M7.5): no mood excuses ("too tired to...", "in no mood for...") - one retry if there is time,
                 # then the sentence goes. Mood never changes what they sell, do or answer.
                 mood_log = {"band": md["band"], "strength": md["strength"], "cheer": md["cheer"],
-                            "energy": md["energy"], "cause": md["cause"]}
+                            "energy": md["energy"], "cause": md["cause"], "nature": md.get("nature", "")}
                 fl = mood.flagged(say)
                 ex = fl[1] if fl else None
                 if ex:
@@ -1349,29 +1408,25 @@ class Handler(BaseHTTPRequestHandler):
                 mood.note_turn(str(npc), str(subject), bool(act))
                 if act:
                     mood_log["action"] = True
-            # Codex r3 R2-5 (2026-11-04): ONE final promise check after every model-producing retry (mood repair included);
-            # no new model call here - a late concession is cut to promises.FALLBACK.
-            if not reveal_id and not (binding or "").startswith("decency") and promises.conceded(say, bool(claim)):
-                promise_log = {**(promise_log or {"claim": bool(claim)}), "late": promises.conceded(say, bool(claim)),
-                               "fixed": "cut-final"}
-                say = promises.strip(say, bool(claim))
+            # Codex R7-1 (2026-11-06): a secret reveal keeps its own budget (reveal_max_chars, 480) - the shard marks it
+            # revealed once spoken, so it must never be cut to the ordinary 300.
+            final_max = CFG["reveal_max_chars"] if reveal_id else REPLY_MAX_CHARS
             hint_note, pre_hint = None, say
             if not reveal_id and not (binding or "").startswith("decency"):   # 2026-11-04: shop line by code
-                # Codex r2 F4: the whole reply is budgeted once - room = the final limit minus the tease added below.
                 tease_room = (len(offer.tease) + 1 if offer is not None and offer.tease else 0)
                 say, hint_note = shop_hint.add(say, utterance, str(req.get("persona_key") or ""),
-                                               req.get("persona_vars"), MOOD_MAX_CHARS - tease_room)
-            # Codex r3 R2-4: the FINAL reply never passes MOOD_MAX_CHARS. Priority: the answer > the tease > the shop line (> a mood
-            # action, already budgeted). A tease that does not fit is dropped and NOT counted as told.
+                                               req.get("persona_vars"), final_max - tease_room)
+            # Codex r3 R2-4: the FINAL reply never passes REPLY_MAX_CHARS. Priority: the answer > the tease > the shop line.
+            # A tease that does not fit is dropped and NOT counted as told.
             tease = offer.tease if offer is not None and offer.tease and not (binding or "").startswith("decency") else ""
-            if tease and len(say) + 1 + len(tease) > MOOD_MAX_CHARS and hint_note == "added":
+            if tease and len(say) + 1 + len(tease) > final_max and hint_note == "added":
                 say, hint_note = pre_hint, "no_room"
-            tease_dropped = bool(tease) and len(say) + 1 + len(tease) > MOOD_MAX_CHARS
+            tease_dropped = bool(tease) and len(say) + 1 + len(tease) > final_max
             if tease and not tease_dropped:
                 say = f"{say.rstrip()} {tease}".strip()   # 2026-11-02: the greeting only teases the tale
                 note_tease(npc, subject, offer.ids)
-            if len(say) > MOOD_MAX_CHARS:
-                say = clean(say, MOOD_MAX_CHARS)
+            if len(say) > final_max:
+                say = clean(say, final_max)
             told = rumour_speech.used(say, offer)
             if offer and (offer.mode == "follow" or (tease and not tease_dropped)) and not told:
                 told = list(offer.ids)   # a follow-up keeps the thread even without the key words; a tease counts
@@ -1386,10 +1441,10 @@ class Handler(BaseHTTPRequestHandler):
                 **({"suffix_disposition": disposition} if disposition else {}),
                 **({"action": action, "offered": actions} if actions else {}),
                 **({"name_scrubbed": True} if gen_scrubbed else {}),
-                **({"mood": mood_log} if mood_log else {}),
                 **({"shop_hint": hint_note} if hint_note else {}),
                 **({"tease_dropped": True} if tease_dropped else {}),
-                **({"promise": promise_log} if promise_log else {}),
+                **({"mood": mood_log} if mood_log else {}),
+                **({"variety": variety_log} if variety_log else {}),
                 **({"rumour": {"ids": offer.ids, "told": told, "mode": offer.mode, "speaker": offer.is_speaker,
                                "sentinel_used": bool(offer.sentinel) and offer.sentinel in say,
                                "first_refusal": binding, "angle": offer.angle, "name_mode": "name" if offer.name else "sentinel"}}
@@ -1483,6 +1538,7 @@ class Handler(BaseHTTPRequestHandler):
                 notes = named.notes_from(parsed, req.get("history"), speaker, roster)   # Codex 5c-1 finding 1
             if items:
                 notes["items"] = items
+            notes = memory.strip_money(notes)   # §21: money talk is never written into a visit note
             ms = int((time.monotonic() - start) * 1000)
             log(event="summary", request_id=rid, npc=npc, outcome="ok", ms=ms, claims=len(notes["claims"]),
                 topics=len(notes["topics"]), items=len(items), **({"skipped": skip} if lines and not worth else {}))

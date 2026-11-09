@@ -368,5 +368,32 @@ class Decency(unittest.TestCase):
         self.assertIn(decency.CONSTITUTION, brain.SYSTEM_RULES)
 
 
+
+# Step B (2026-11-08): the dev play test of 2026-11-06 - "do you remember what I killed?" got no memory (cards:0) because
+# all of Mirabel's cards were cooling and "killed" (DEATH) did not reach "slew" (FIGHT). Kill / slay words now share one
+# concept (SLAY, under FIGHT and DEATH), so the question asks about the wyrm card directly and a direct ask beats cooling.
+class KilledFindsSlew(unittest.TestCase):
+    def wyrm(self):
+        con = cards.concepts()
+        text = 'Yesterday: They told you: "they slew a wyrm near Yew" (their word, not a known fact).'
+        c = cards.Card("e:46-13:0", "episode", text, cards._words("they slew a wyrm near yew"),
+                       con.found("they slew a wyrm near yew"), cls="heavy", order=(1, 0))
+        c.rank = 1.0
+        bard = cards.Card("f:trade", "fact", "They told you (their word): they are a bard.", cards._words("bard"),
+                          con.found("bard"), order=(1, 0))
+        bard.rank = 1.0
+        return c, bard
+
+    def test_killed_reaches_a_cooled_slew_card(self):
+        w, b = self.wyrm()
+        for u in ("do you remember what I killed?", "remember the thing I slayed?", "who did I kill?"):
+            got = [i for i, _ in cards.select([w, b], u, cooled={w.id, b.id})]
+            self.assertIn(w.id, got, u)
+
+    def test_cooling_still_holds_for_an_unrelated_ask(self):   # positive control: same cards, same cooling
+        w, b = self.wyrm()
+        self.assertEqual(cards.select([w, b], "do you remember what I sold?", cooled={w.id, b.id}), [])
+
+
 if __name__ == "__main__":
     unittest.main()

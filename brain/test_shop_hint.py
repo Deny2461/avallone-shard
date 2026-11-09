@@ -105,7 +105,10 @@ class ThroughHandler(unittest.TestCase):
         self.assertEqual(rec.get("shop_hint"), "added")
 
     def test_not_added_to_ordinary_talk(self):
-        for u in ("How much do you trust me?", "My companion sold me out to the guards", "hello"):
+        for u in ("How much do you trust me?", "My companion sold me out to the guards", "hello",
+                  # Codex R7-2 (2026-11-06), through the real handler with Nell
+                  "Do you have any idea why horses are restless?", "Do you have any memories involving horses?",
+                  "How much is the ale shortage hurting the town?"):
             out, rec = self.ask(u, "Hard to say, Tamsin.")
             self.assertNotIn("vendor buy", out["say"], u)
             self.assertNotIn("shop_hint", rec, u)
@@ -125,7 +128,7 @@ class ThroughHandler(unittest.TestCase):
     def test_final_reply_within_limit(self):
         long = ("Grain, salted meats, dried fruit and ale " * 8)[:235].rstrip() + "."
         out, rec = self.ask("what do you sell?", long)
-        self.assertLessEqual(len(out["say"]), brain.MOOD_MAX_CHARS)
+        self.assertLessEqual(len(out["say"]), brain.REPLY_MAX_CHARS)
 
 
 if __name__ == "__main__":

@@ -541,6 +541,61 @@ def _duration(mins):
     return "an hour" if hours == 1 else f"{hours:g} hours"
 
 
+# §21 memory filter (the owner, chat, 2026-11-06: an NPC may go along with a debt in the moment, but it must not carry into a
+# later conversation). Any exchange or note that touches money is left out of everything recalled from the ledger.
+# Deliberately wide: a false match only means one small exchange is forgotten. Applied on READ, so rows already
+# stored are covered and nothing is deleted. "promise" alone is NOT money ("you promised to keep watch" stays).
+MONEY_WORDS = (
+    "owe", "owed", "owes", "owing", "debt", "debts", "debtor", "indebted", "tab", "tabs", "iou",
+    "loan", "loans", "loaned", "lend", "lends", "lent", "lending", "borrow", "borrows", "borrowed", "borrowing",
+    "repay", "repays", "repaid", "pay", "pays", "paid", "paying", "payment", "payments", "payday", "payout",
+    "wage", "wages", "fee", "fees", "reward", "rewards", "rewarded", "bounty", "bounties",
+    "share", "shares", "split", "bet", "bets", "wager", "wagers", "wagered",
+    "gold", "coin", "coins", "coppers", "copper", "silver", "crown", "crowns", "gp", "purse", "purses",
+    "money", "riches", "treasure", "fortune", "cash", "earnings", "salary", "tip", "tips",
+    # Codex R5-1 (2026-11-06): bills, accounts, balances, credit and settling up
+    "bill", "bills", "billed", "unpaid", "underpaid", "overpaid", "prepaid", "overdue", "outstanding", "arrears", "dues",
+    "account", "accounts", "balance", "balances", "credit", "credits", "credited", "settle", "settles", "settled",
+    "settling", "settlement", "tally", "tallies", "reckoning", "ledger", "charge", "charges", "charged", "refund", "refunds",
+    "refunded", "deposit", "rent", "price", "prices", "cost", "costs", "costed", "expense", "expenses", "compensation",
+    # Codex GitHub-Publishing R5-1 (2026-11-07): whole word families, not single forms (repayment, reimburse, deposits...),
+    # plus the other missing forms of words above. Still a finite list - best effort, not a guarantee (Codex).
+    "repayment", "repayments", "repaying", "repayable", "reimburse", "reimburses", "reimbursed", "reimbursing",
+    "reimbursement", "reimbursements", "deposits", "deposited", "depositing", "payed", "payable", "payer", "payers",
+    "payee", "payees", "lender", "lenders", "borrower", "borrowers", "debtors", "loaning", "wagering", "betting",
+    "tipped", "tipping", "rents", "rented", "renting", "rental", "rentals", "renter", "priced", "pricing", "pricey",
+    "costly", "costing", "expensive", "charging", "refunding", "billing", "crediting", "creditor", "creditors",
+    "earn", "earns", "earned", "earning", "profit", "profits", "compensate", "compensated", "compensating",
+    "recompense", "restitution", "remuneration", "collateral", "pawn", "pawned", "ransom", "tithe", "tithes", "tax",
+    "taxes", "toll", "tolls", "penny", "pennies", "pence", "shilling", "shillings", "currency", "invoice", "invoices",
+    "receipt", "receipts",
+)
+MONEY_TALK = re.compile(r"(?<![\w])(?:" + "|".join(MONEY_WORDS) + r"|a\s+cut|cut\s+of)(?![\w])", re.IGNORECASE)
+
+
+def money_talk(text):
+    """True if this text touches money at all (wide on purpose - see MONEY_WORDS)."""
+    return bool(MONEY_TALK.search(unicodedata.normalize("NFKC", str(text or ""))))
+
+
+def conversation_money(facts):
+    """A stored conversation exchange that touches money, on either side."""
+    return money_talk((facts or {}).get("player_said")) or money_talk((facts or {}).get("she_said"))
+
+
+def strip_money(facts):
+    """A visit_summary's facts with every money claim, topic and request item removed (a copy; the row is untouched)."""
+    if not isinstance(facts, dict):
+        return facts
+    out = dict(facts)
+    for k in ("claims", "topics"):
+        if isinstance(out.get(k), list):
+            out[k] = [c for c in out[k] if not money_talk(c)]
+    if isinstance(out.get("items"), list):
+        out["items"] = [i for i in out["items"] if not money_talk(str(i).split("|", 1)[-1])]
+    return out
+
+
 def render(kind, facts):
     """One memory, in her own voice (second person, like the rest of her prompt)."""
     if kind == "conversation":
@@ -622,9 +677,19 @@ def _retrieve(self, npc_id, char_id, utterance, skip_conversations=0, budget_cha
         if self.rdb.execute(f"SELECT 1 FROM ({TOMBSTONED}) WHERE char_id = ?", (char_id,)).fetchone():
             return [] if records else ([], [])
         pair = "npc_id = ? AND char_id = ? AND status = 'live' AND kind != 'turning_point_revoked'"
-        skip = {r[0] for r in self.rdb.execute(
-            f"SELECT event_id FROM events WHERE {pair} AND kind = 'conversation' ORDER BY epoch DESC, seq DESC LIMIT ?",
-            (npc_id, char_id, int(skip_conversations)))}
+        # §21: money exchanges are never recalled, and are not counted here either, so this skip set is exactly the
+        # history restore's (_history) when the shard sent none.
+        # Codex GH-Pub R5-2 (2026-11-07): the scan stops once the skip set is full (it used to walk the pair's whole
+        # history every reply); money exchanges are instead refused one by one in add() below, on the few candidates.
+        skip = set()
+        if int(skip_conversations) > 0:
+            for r in self.rdb.execute(
+                    f"SELECT event_id, facts FROM events WHERE {pair} AND kind = 'conversation' ORDER BY epoch DESC, seq DESC "
+                    "LIMIT ?", (npc_id, char_id, HISTORY_SCAN_ROWS)):
+                if len(skip) >= int(skip_conversations):
+                    break
+                if not conversation_money(json.loads(r[1])):
+                    skip.add(r[0])
         # A GM-undone turning point is never remembered (a turning_point_revoked event names it).
         revoked = {json.loads(r[0]).get("turning_point") for r in self.rdb.execute(
             "SELECT facts FROM events WHERE npc_id = ? AND char_id = ? AND status = 'live' AND kind = 'turning_point_revoked'",
@@ -635,9 +700,13 @@ def _retrieve(self, npc_id, char_id, utterance, skip_conversations=0, budget_cha
                 (npc_id, char_id)) if json.loads(r[1]).get("turning_point") in revoked}
         picked = []   # (event_id, reason)
 
+        def is_money(eid):   # §21 + R5-2: checked per candidate (a handful per reply), not over the whole history
+            r = self.rdb.execute("SELECT kind, facts FROM events WHERE event_id = ?", (eid,)).fetchone()
+            return bool(r) and r[0] == "conversation" and conversation_money(json.loads(r[1]))
+
         def add(rows, reason):
             for r in rows:
-                if r["event_id"] not in skip and all(r["event_id"] != e for e, _ in picked):
+                if r["event_id"] not in skip and all(r["event_id"] != e for e, _ in picked) and not is_money(r["event_id"]):
                     picked.append((r["event_id"], reason))
 
         marks = ",".join("?" * len(BIG_KINDS))
@@ -718,7 +787,7 @@ def _visit_notes(self, npc_id, char_id, utterance="", newest=3, budget_chars=600
     rows = sorted(rows, key=lambda r: (r["epoch"], r["seq"]))
     out, used = [], 0
     for r in reversed(rows):   # newest first into the budget, then shown oldest first
-        line = f"{when(r['at_utc'], datetime.now(timezone.utc))}: {named.render(json.loads(r['facts']))}"
+        line = f"{when(r['at_utc'], datetime.now(timezone.utc))}: {named.render(strip_money(json.loads(r['facts'])))}"
         if used + len(line) > budget_chars:
             continue
         used += len(line)
@@ -726,15 +795,27 @@ def _visit_notes(self, npc_id, char_id, utterance="", newest=3, budget_chars=600
     return list(reversed(out))
 
 
+# Codex GH-Pub R6 P2 (2026-11-09): the history restore and the recall skip set each look at no more than this many of the
+# pair's newest conversation rows. A long money-only tail used to be decoded in full under the reader lock on every reply
+# (100,000 money rows ~1.3 s in Codex's probe). Both loops read the same newest rows in the same order with the same cap,
+# so the skip set still equals what the history restore restored; past the cap, fewer exchanges are restored - accepted.
+HISTORY_SCAN_ROWS = 200
+
+
 def _history(self, npc_id, char_id, pairs=4):
     """The last few exchanges, so a restart doesn't wipe the thread of a conversation."""
     with self.rlock:
-        rows = self.rdb.execute(
-            """SELECT facts FROM events WHERE npc_id = ? AND char_id = ? AND status = 'live' AND kind = 'conversation'
-               ORDER BY epoch DESC, seq DESC LIMIT ?""", (npc_id, char_id, int(pairs))).fetchall()
+        rows = []
+        for r in self.rdb.execute(
+                """SELECT facts FROM events WHERE npc_id = ? AND char_id = ? AND status = 'live' AND kind = 'conversation'
+                   ORDER BY epoch DESC, seq DESC LIMIT ?""", (npc_id, char_id, HISTORY_SCAN_ROWS)):
+            if len(rows) >= int(pairs):
+                break
+            f = json.loads(r["facts"])
+            if not conversation_money(f):   # §21: a money exchange is never restored
+                rows.append(f)
     out = []
-    for r in reversed(rows):
-        f = json.loads(r["facts"])
+    for f in reversed(rows):
         out.append({"speaker": "player", "text": f.get("player_said", "")})
         out.append({"speaker": "npc", "text": f.get("she_said", "")})
     return out
@@ -771,8 +852,10 @@ def _pair_rows(self, npc_id, char_id, kinds=("visit_summary", "reply_delivered")
             f"""SELECT event_id, epoch, seq, kind, facts, at_utc FROM events
                 WHERE npc_id = ? AND char_id = ? AND status = 'live' AND kind IN ({marks})
                 ORDER BY epoch, seq""", (npc_id, char_id, *kinds)).fetchall()
+    # §21: visit notes reach the cards with their money claims/topics/requests removed
     return [{"event_id": r["event_id"], "epoch": r["epoch"], "seq": r["seq"], "kind": r["kind"],
-             "facts": json.loads(r["facts"]), "at_utc": r["at_utc"]} for r in rows]
+             "facts": strip_money(json.loads(r["facts"])) if r["kind"] == "visit_summary" else json.loads(r["facts"]),
+             "at_utc": r["at_utc"]} for r in rows]
 
 
 def _legacy_marker(self, now_mpt):

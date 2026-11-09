@@ -4,7 +4,7 @@ From one talking innkeeper to a world that runs itself. Each phase ends in somet
 to and judge, and the later, bigger phases each get their own go/no-go decision once the earlier ones prove
 fun.
 
-**Key:** ✅ live on the shard · 🔧 built, in testing · 📐 designed, not built · 💡 planned idea
+**Key:** ✅ live on the shard · 🔧 built, in testing · ⏸️ built, shelved · 📐 designed, not built · 💡 planned idea
 
 ```mermaid
 flowchart LR
@@ -52,8 +52,8 @@ the game.
 | 4d | Soak: deliberate failure tests in the brain and in game, plus fixes | ✅ |
 | 4e | Companion gear, and typo-tolerant names for every NPC | ✅ |
 
-Along the way: **answering without the name** (a 45-second conversation window plus a real game-command
-list) ✅, and **NPCs answer only what is meant for them** ✅.
+Along the way: **answering without the name** (a short conversation window plus a real game-command
+list; replaced in Phase 5 by the conversation lock) ✅, and **NPCs answer only what is meant for them** ✅.
 
 ### The wanderer prototype ✅
 One sellsword who travels, hunts, sells, banks and rests on his own, with route planning: the first step
@@ -72,8 +72,10 @@ toward NPCs who "do their own thing".
 | 5c-2 · 2a | Structured memory cards | ✅ |
 | 5c-2 · shop fix | Buying and selling lines that name nobody stay with the game | ✅ |
 | 5c-2 · 2b | Relationship dials, gifts and likes, **the two moons**, companions travel on Recall | ✅ |
-| 5c-2 · guard | Always-on "no money promises" line | ✅ |
-| 5c-2 · 2c | **NPC mood**, a stronger promise guard, an automatic shop hint, reflection v2 | 🔧 |
+| 5c-2 · guard | Money talk kept out of what NPCs remember, so a claimed debt can't be built up over visits (replaced an always-on "no money promises" line) | ✅ |
+| 5c-2 · 2c | **NPC mood** (one per NPC per day), an automatic shop hint, reflection v2 | ✅ |
+| 5c-2 · step B | A **nature** for every townsperson, a **conversation lock** (who you are talking to), a repeat catcher | ✅ |
+| 5c-2 · promise guard | A stronger guard that spots a claimed promise and rewrites a reply that gives in | ⏸️ |
 | 5c-2 · 2d | Rumours that drift, get corrected, and carry how sure the teller is | 📐 |
 | 5c-2 · 2e | Rumours on the same memory model, plus a town-wide reputation | 📐 |
 | 5c-2 · rest | More named characters in town, with their own placement file | 📐 |
@@ -88,8 +90,8 @@ another town that evening, and the named NPCs feel like people who know you.
 companions as pack mules · jewellery and magic gear, one property at a time · sound-alike name matching
 (logged only today).
 
-**Model work:** the brain recently moved to a newer home model machine. The mood trials are being
-re-run there before mood goes live, and a larger model may be tried.
+**Model work:** the brain moved to a newer home model machine, and after a trial of its own, to the larger
+Gemma 4 26B model (November 2026). Mood went live on it.
 
 ## Coming next
 

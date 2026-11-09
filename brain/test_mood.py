@@ -169,7 +169,8 @@ class Shape(Rig):
         self.assertEqual(mood.band_of(-50, -50)[0], "glum")       # first match wins
         self.assertEqual(mood.band_of(50, 50)[0], "cheerful")
         self.assertEqual(mood.band_of(0, 50)[0], "lively")
-        self.assertEqual(mood.band_of(29, -29), ("content", "", None))
+        self.assertEqual(mood.band_of(14, -14), ("content", "", None))   # edge 15 since Step B 2026-11-08 (was 29/-29 at 30)
+        self.assertEqual(mood.band_of(16, 0)[:2], ("cheerful", "a little"))
         self.assertEqual(mood.band_of(0, -35)[1], "a little")
         self.assertEqual(mood.band_of(0, -50)[1], "")
         self.assertEqual(mood.band_of(0, -75)[1], "very")

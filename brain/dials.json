@@ -173,9 +173,10 @@
     ]
   },
   "gossip": {
-    "_doc": "Enforced in code: trust below trust_below -> no live gossip (asked or volunteered); warmth below greet_warmth_below -> no gossip volunteered on a greeting; familiarity (visit days) below greet_familiarity_min -> no gossip volunteered on a greeting (the owner, 2026-11-02). Held = ALL news kept back: live deeds, made-up chatter and the Rumours/ lore pages.",
+    "_doc": "Enforced in code: trust below trust_below -> no live gossip (asked or volunteered); warmth below greet_warmth_below -> no gossip volunteered on a greeting; familiarity (visit days) below greet_familiarity_min -> a greeting hint only at greet_stranger_share of the NPC's normal greeting rate (the owner, 2026-11-08: - it encourages travel and talking to people; was: none at all, the owner 2026-11-02). Held = ALL news kept back: live deeds, made-up chatter and the Rumours/ lore pages.",
     "trust_below": -20,
     "greet_warmth_below": -20,
-    "greet_familiarity_min": 3
+    "greet_familiarity_min": 3,
+    "greet_stranger_share": 0.1667
   }
 }

@@ -122,8 +122,10 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
 
         // Spoken to a companion standing nearby (named, or mid-conversation with her) - not to Mirabel.
         // Phase 4e N: also a line that names someone else nearby (exactly or close enough), or fits two names equally.
+        // Step B: while the player is talking to someone else (Conversation), a line naming nobody is theirs.
         if (TownsfolkTalk.IsStaffCommand(text) || BaseCompanion.IsTalkingToCompanion(from, text) ||
-            BaseWanderer.IsTalkingToWanderer(from, text) || TownsfolkTalk.NamesSomeoneNearby(from, text, this))
+            BaseWanderer.IsTalkingToWanderer(from, text) || TownsfolkTalk.NamesSomeoneNearby(from, text, this) ||
+            !NamesHer(from, text) && Conversation.HeldByOther(from, this))
         {
             return;
         }
@@ -135,6 +137,7 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
         }
 
         _nextHeard[from] = now + PerPlayerCooldown;
+        Conversation.Note(from, this, text);   // Step B: the conversation lock
         _ = RespondAsync(from, text);
     }
 

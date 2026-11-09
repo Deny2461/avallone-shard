@@ -13,6 +13,7 @@ v1.1 after the Codex 2c design review, 2026-11-03). Pure derivation, no model ca
 - at most one small bracketed action per reply, rare, rate-limited per conversation and per NPC (M7.6); in memory.
 
 Mood changes tone, optional gossip and flavour only - never prices, goods, services, facts, quests, or answering."""
+import nature  # Step B 2026-11-08: ordinary NPCs' nature tilts their mood
 import hashlib
 import json
 import math
@@ -26,9 +27,10 @@ from zoneinfo import ZoneInfo
 
 CONFIG = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mood.json")
 CENTRAL = ZoneInfo("America/Chicago")
-RULES_VERSION = "2c-1"
+RULES_VERSION = "2c-3"   # 2c-2 (Step B, 2026-11-08): edge 15, jitter 15, content styles, how angles; 2c-3: personality tilt
 _lock = threading.Lock()
 _state = {"cfg": None, "mtime": None}
+_how_n = {}   # (npc, date) -> how many "how are you?" asks so far today: each ask gets the next angle
 RNG = random.Random()
 
 
@@ -59,28 +61,38 @@ def central_date(now=None):
     return datetime.fromtimestamp(time.time() if now is None else float(now), CENTRAL).strftime("%Y-%m-%d")
 
 
-def rest(npc_id, persona_key=""):
-    """The NPC's resting point: the persona's own (named NPCs) or a stable draw (townsfolk), leaning pleasant."""
+def nature_of(req):
+    """The ordinary NPC's personality (template personas only - the shard sends persona_vars), or None."""
+    return nature.of(req.get("npc_id")) if req.get("persona_vars") else None
+
+
+def rest(npc_id, persona_key="", templated=False):
+    """The NPC's resting point: the persona's own (named NPCs) or a stable draw (townsfolk), leaning pleasant. Step B
+    (the owner, chat, 2026-11-08: personality tilts mood): a templated NPC's nature moves it (e.g. grumpy -10 cheer)."""
     c = cfg()
     p = c["personas"].get(str(persona_key or "").lower())
     if p:
         return float(p.get("cheer", 0)), float(p.get("energy", 0))
     lo, hi = c["rest"]["cheer"]
     elo, ehi = c["rest"]["energy"]
-    return (round(lo + (hi - lo) * _unit("rest-cheer", npc_id), 1),
-            round(elo + (ehi - elo) * _unit("rest-energy", npc_id), 1))
+    tc, te, _ = nature.tilt(npc_id) if templated else (0.0, 0.0, None)
+    return (round(lo + (hi - lo) * _unit("rest-cheer", npc_id) + tc, 1),
+            round(elo + (ehi - elo) * _unit("rest-energy", npc_id) + te, 1))
 
 
-def day_draw(npc_id, date):
+def day_draw(npc_id, date, swing=None):
     """(day type, cheer, energy) for this NPC on this Central date - the same all day, new tomorrow. 1 in 6 off (weary,
     glum or short-tempered), 1 in 6 bright (cheerful or lively), the rest ordinary (the owner, 2026-11-03, 2c-2). Each off/bright
     kind pushes its own axis (sim 2026-11-03: with one push per day, lively never happened)."""
     d = cfg()["day"]
+    sw = swing or {}   # Step B: a moody/dramatic/eccentric/hot-tempered nature swings wider (more off and bright days)
+    jx, sx = float(sw.get("jitter_x", 1.0)), float(sw.get("share_x", 1.0))
+    off, bright = d["off_share"] * sx, d["bright_share"] * sx
     u = _unit("day", npc_id, date)
-    jc = round(d["jitter"] * (2 * _unit("day-jc", npc_id, date) - 1), 1)
-    je = round(d["jitter"] * (2 * _unit("day-je", npc_id, date) - 1), 1)
-    if u < d["off_share"] + d["bright_share"]:
-        mix = d["off_mix"] if u < d["off_share"] else d["bright_mix"]
+    jc = round(d["jitter"] * jx * (2 * _unit("day-jc", npc_id, date) - 1), 1)
+    je = round(d["jitter"] * jx * (2 * _unit("day-je", npc_id, date) - 1), 1)
+    if u < off + bright:
+        mix = d["off_mix"] if u < off else d["bright_mix"]
         v, acc = _unit("day-kind", npc_id, date), 0.0
         for kind, share in mix.items():
             acc += share
@@ -174,8 +186,9 @@ def compute(req, ledger, dial, now=None):
     visits = ledger.npc_rows(npc, ep, kinds=("visited",), day=date)
     if rows is None or visits is None:
         return None
-    r_cheer, r_energy = rest(npc, req.get("persona_key"))
-    kind, d_cheer, d_energy = day_draw(npc, date)
+    nat = nature_of(req)
+    r_cheer, r_energy = rest(npc, req.get("persona_key"), templated=nat is not None)
+    kind, d_cheer, d_energy = day_draw(npc, date, nature.tilt(npc)[2] if nat else None)
     gift, n_gifts = gift_effect(rows, pt)
     visitors = len({v["char_id"] for v in visits})
     u = float((dial.get("sources") or {}).get("unease") or 0.0)
@@ -183,6 +196,7 @@ def compute(req, ledger, dial, now=None):
           "energy": {"long_day": busy_effect(visitors), "late_hour": hour_effect(hour)}}
     cap = float(c["events_cap"])
     out = {"date": date, "pt": pt, "hour": hour, "rules": RULES_VERSION, "day_type": kind,
+           "nature": nature.label(npc) if nat else "",
            "evidence": {"gifts_counted": n_gifts, "gift_rows": len(rows), "visitors_today": visitors, "unease": u}}
     scores = {}
     for axis, r_v, d_v in (("cheer", r_cheer, d_cheer), ("energy", r_energy, d_energy)):
@@ -227,13 +241,20 @@ def place():
     return "turn" if cfg().get("place") == "turn" else "head"
 
 
-def voice(m):
+def pick(options, *keys):
+    """A plain string as is; from a list, one stable choice for these keys (Step B 2026-11-08: variety per NPC)."""
+    if isinstance(options, list):
+        return options[int(_unit("pick", *keys) * len(options)) % len(options)] if options else ""
+    return options or ""
+
+
+def voice(m, npc=""):
     """The mood half of the one voice line (Codex idea 2: mood = how they speak today; the 2b dials that follow = how
     they receive this person). Never a reason, never a number (M3b)."""
     if not m:
         return ""
     if cfg().get("voice_style"):   # M11: a speaking-style hint per band (tone only)
-        hint = (cfg().get("style") or {}).get(m["band"], "")
+        hint = pick((cfg().get("style") or {}).get(m["band"], ""), "style", npc, m.get("date", ""))
         return (f"Today you are {word(m)}. {hint} It shows only in how you speak, never in what you sell, do or answer, "
                 "and you never give a reason for it.").replace("  ", " ")
     return (f"Today you are {word(m)} - let it colour how you speak, never what you sell, do or answer, and never give "
@@ -253,12 +274,28 @@ def asks_how(utterance):
     return bool(HOW_ARE_YOU.search(utterance or ""))
 
 
-def how_block(m):
+def how_angle(npc, date, extra=()):
+    """Step B (2026-11-08): the angle for this ask - different NPCs start at different places, and asking the same NPC
+    again moves on to the next one."""
+    angles = list(cfg().get("how_angles") or []) + [a for a in extra if a]   # Step B: + the NPC's pet subject
+    if not angles:
+        return ""
+    with _lock:
+        n = _how_n.get((npc, date), 0)
+        _how_n[(npc, date)] = n + 1
+        if len(_how_n) > 20000:
+            _how_n.clear()
+    start = int(_unit("how", npc, date) * len(angles))
+    return angles[(start + n) % len(angles)]
+
+
+def how_block(m, npc="", templated=False):
     """Situation line for a "how are you?" turn: the model says how they feel in a few words; code adds the reason."""
     # Integrated trial 2026-11-03: "say that you are glum" made 36 of 44 replies say the word outright ("I am glum
     # today.") - stilted. Now: show it in a few words of your own, without naming it.
     return (f"They asked how you are. You feel {word(m)} today: let it show in a few words of your own, without naming "
-            "the feeling outright. Give no reason or explanation." if m else "")
+            "the feeling outright. Give no reason or explanation. " +
+            how_angle(npc, m.get("date", ""), [nature.subject_angle(npc)] * 2 if templated else ())).strip() if m else ""
 
 
 def cause_clause(m, rng=None):
@@ -415,13 +452,17 @@ def greet_percent(m):
     return int(c.get(m["band"], c["default"])) if m else int(c["default"])
 
 
-def greet_draw(m, rng=None):
-    return (rng or RNG).random() * 100 < greet_percent(m)
+def greet_draw(m, rng=None, scale=1.0):
+    return (rng or RNG).random() * 100 < greet_percent(m) * scale
 
 
 def explain(m):
     """[Named why] rows (M7.4): everything needed to see why the NPC is as it is."""
     if not m:
         return None
-    return {k: m[k] for k in ("band", "strength", "cheer", "energy", "cheer_parts", "energy_parts", "day_type", "cause",
-                              "gift_helped", "date", "pt", "hour", "rules", "evidence")}
+    out = {k: m[k] for k in ("band", "strength", "cheer", "energy", "cheer_parts", "energy_parts", "day_type", "cause",
+                             "gift_helped", "date", "pt", "hour", "rules", "evidence")}
+    if m.get("nature"):   # Step B: the shard prints day_type as is, so the nature shows there without a rebuild
+        out["day_type"] = f'{m["day_type"]}; nature: {m["nature"]}'
+        out["nature"] = m["nature"]
+    return out

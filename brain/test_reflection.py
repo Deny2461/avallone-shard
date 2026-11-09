@@ -274,7 +274,7 @@ class TickTests(unittest.TestCase):
         brain.LAST_PLAY = time.monotonic() - 10
         self.saved = (brain.ollama_json, brain.ollama_other_models)
         brain.ollama_other_models = lambda *a: []
-        brain.ollama_json = lambda system, user, schema, t, n: answer(BRAVE)(system, user, schema)
+        brain.ollama_json = lambda system, user, schema, t, n, **k: answer(BRAVE)(system, user, schema)
 
     def tearDown(self):
         brain.ollama_json, brain.ollama_other_models = self.saved
@@ -302,7 +302,7 @@ class TickTests(unittest.TestCase):
         self.assertIsNone(brain.reflect_tick())   # backed off, not hammering
 
     def test_cut_off_answers_are_retried_then_given_up(self):
-        brain.ollama_json = lambda *a: None
+        brain.ollama_json = lambda *a, **k: None
         for attempt in (1, 2):
             self.assertEqual(brain.reflect_tick()["outcome"], "unusable_answer")
             self.assertEqual(brain.LEDGER.reflection_status()["reflections"], 0)
@@ -323,7 +323,7 @@ class TickTests(unittest.TestCase):
 
     def test_reply_arriving_mid_reflection_is_counted_not_blocked(self):
         seen = []
-        def slow(system, user, schema, t, n):
+        def slow(system, user, schema, t, n, **k):
             seen.append(brain.REFLECTING)
             return answer(BRAVE)(system, user, schema)
         brain.ollama_json = slow
@@ -340,13 +340,13 @@ class TickTests(unittest.TestCase):
         self.assertEqual(brain.LEDGER.beliefs(NPC, CHAR, reviewed_only=True), [])
 
     def test_model_failure_is_swallowed_and_retried_later(self):
-        def boom(*a):
+        def boom(*a, **k):
             raise TimeoutError("timed out")
         brain.ollama_json = boom
         self.assertEqual(brain.reflect_tick()["outcome"], "error")   # no exception escapes
         self.assertEqual(brain.LEDGER.reflection_status()["reflections"], 0)
         brain.REFLECT_RETRY.clear()
-        brain.ollama_json = lambda system, user, schema, t, n: answer(BRAVE)(system, user, schema)
+        brain.ollama_json = lambda system, user, schema, t, n, **k: answer(BRAVE)(system, user, schema)
         self.assertEqual(brain.reflect_tick()["kept"], 1)
 
     def test_shadow_beliefs_are_stored_but_marked_shadow(self):

@@ -37,7 +37,6 @@ public abstract partial class BaseCompanion : BaseCreature
     private const int SideRange = 2;
 
     private static readonly TimeSpan PerPlayerCooldown = TimeSpan.FromSeconds(3);
-    private static readonly TimeSpan ConversationWindow = TimeSpan.FromSeconds(45); // 30 lapsed while the owner typed (chat, 2026-10-07)
     private static readonly TimeSpan FallbackCooldown = TimeSpan.FromMinutes(3);
     private static readonly TimeSpan WoundedFor = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan FightOverAfter = TimeSpan.FromSeconds(4);
@@ -447,11 +446,18 @@ public abstract partial class BaseCompanion : BaseCreature
     // Named, or still mid-conversation with her, or - unnamed - she is the obvious listener.
     // A line naming someone else nearby is theirs, even mid-conversation with her (the owner, 2026-10-02).
     // A staff command is never hers (the owner, 2026-10-14).
+    // Step B (the owner, chat, 2026-11-08): while the player is talking to someone (Conversation), a line naming nobody is
+    // that partner's; a plain order to her from the one she travels with, within 3 tiles, is still hers.
     public bool IsAddressedBy(Mobile from, string text, bool hasKeywords = false) =>
         !TownsfolkTalk.IsStaffCommand(text) &&
         (IsNamed(from, text) ||
          !TownsfolkTalk.NamesSomeoneNearby(from, text, this) &&
-         (_lastTalk.TryGetValue(from, out var t) && Core.Now - t < ConversationWindow || !hasKeywords && IsObviousListener(from)));
+         (Conversation.Partner(from) is { } partner
+             ? partner == this || IsOwnOrder(from, text)
+             : !hasKeywords && IsObviousListener(from)));   // Step B: no 45 s window (Codex r1 finding 2)
+
+    private bool IsOwnOrder(Mobile from, string text) =>
+        ControlMaster == from && from.Map == Map && from.InRange(this, UnnamedRange) && PlainOrder(text, Name) != null;
 
     // the owner, chat, 2026-10-02: answer without her name.
     // Built as decision 1(a): she is travelling with him, within 3 tiles, he is not mid-conversation with a
@@ -517,6 +523,7 @@ public abstract partial class BaseCompanion : BaseCreature
         if (TryGearRequest(from, text))
         {
             _lastTalk[from] = Core.Now;
+            Conversation.Note(from, this, text);   // Step B: the conversation lock
             return;
         }
 
@@ -536,6 +543,7 @@ public abstract partial class BaseCompanion : BaseCreature
 
         _nextHeard[from] = now + PerPlayerCooldown;
         _lastTalk[from] = now;
+        Conversation.Note(from, this, text);   // Step B: the conversation lock
 
         if (ControlMaster == null && !CompanionTrust.WillJoin(GetTrust(from)) &&
             (!_nextTalkedRound.TryGetValue(from, out var round) || now >= round))

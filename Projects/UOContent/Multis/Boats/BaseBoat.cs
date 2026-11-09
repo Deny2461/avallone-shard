@@ -185,16 +185,8 @@ namespace Server.Multis
         // Avallone: when this ship may next cross at a serpent pillar (SerpentPillars). Not saved.
         public DateTime NextPillarCrossing { get; set; }
 
-        public int Status =>
-            (Core.Now - (TimeOfDecay - BoatDecayDelay)) switch
-            {
-                var start when start < TimeSpan.FromHours(1) => 1043010, // This structure is like new.
-                var start when start < TimeSpan.FromDays(2)  => 1043011, // This structure is slightly worn.
-                var start when start < TimeSpan.FromDays(3)  => 1043012, // This structure is somewhat worn.
-                var start when start < TimeSpan.FromDays(4)  => 1043013, // This structure is fairly worn.
-                var start when start < TimeSpan.FromDays(5)  => 1043014, // This structure is greatly worn.
-                _                                            => 1043015  // This structure is in danger of collapsing.
-            };
+        // Avallone: ships never decay, so they always read as like new.
+        public int Status => 1043010; // This structure is like new.
 
         public virtual int NorthID => 0;
         public virtual int EastID => 0;
@@ -422,7 +414,8 @@ namespace Server.Multis
             TillerMan?.InvalidateProperties();
         }
 
-        private bool ShouldDecay => !IsMoving && Core.Now >= _timeOfDecay;
+        // Avallone: ships never decay (the owner, chat, 2026-11-07). The timer is still kept and saved, but never acts.
+        private bool ShouldDecay => false;
 
         public bool CheckDecay()
         {
