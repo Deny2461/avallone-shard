@@ -400,6 +400,8 @@ public static class RumourSpeech
     // Phase 5c: the same bounded roster, for scrubbing player names out of visit notes.
     public static RumourRosterEntry[] CurrentRoster() => Roster();
 
+    public static void ResetRosterForTests() => _rosterAt = DateTime.MinValue; // Stage A1 tests: skip the 60 s cache
+
     private static RumourRosterEntry[] Roster()
     {
         var now = Core.Now;

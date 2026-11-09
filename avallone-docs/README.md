@@ -44,6 +44,8 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
   the story spreads town to town along the roads. It gets a little garbled as it goes, and fades with time.
 - **The moons matter.** When both of Sosaria's moons are bright, the superstitious folk get jumpy and trust
   strangers less.
+- **They notice who you travel with.** Townsfolk and the innkeeper can see your companion and your pets, and now
+  and then speak to your companion or remark on your horse, by the name you gave it.
 - **A wandering sellsword lives his own life.** He travels, hunts, sells his loot, banks and rests, whether
   or not anyone is watching.
 

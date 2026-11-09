@@ -207,6 +207,20 @@ In a busy tavern, the shard has to decide who a line is for before any model is 
 - **Not at all.** Real game commands, anything starting with `[`, and lines meant for another NPC
   ("Mirabel, …") never reach the wrong NPC.
 
+### Who travels with you
+
+When you talk to a townsperson or the innkeeper, the shard also tells the brain who is standing with you: up to two of your
+companions (name and title) and up to three pets nearby, plus the mount you ride (species, and the name you gave it). Only
+what anyone standing there could see: never a companion's trust, secrets or memories.
+
+- **A pet's name never reaches the model.** The model sees a placeholder; the real name is put in only after every other check,
+  then the whole reply is checked again. In what the NPC remembers of the conversation, the name is replaced by the species,
+  so it never comes back to the model on a later turn.
+- **Names that could be confused with a real player** (a companion called Elspeth Vale next to a player called Elspeth Gray, a
+  pet named like a player) are left out: the companion is called by their title, the pet by its species.
+- **How often.** The NPC mentions your company now and then, when it fits. If about seven replies in a row have ignored them,
+  the next one is nudged to say something. The shard counts only replies that were really spoken.
+
 ## 6. Memory
 
 ### Restore-safe event ledger
@@ -500,6 +514,8 @@ Avallónë also tunes the game itself. Each rule is a setting in `AvalloneRules`
 - guards deal with monsters that chase you into town
 - ships can sail through the serpent pillars
 - Treasures of Tokuno on
+- Discordance lowers the discorded creature's own defence chance (the stock code lowered its *target's* by mistake), and a guild
+  war that runs out tells the winner it won (the stock code told it "draw")
 
 ## 17. Testing and review
 

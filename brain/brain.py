@@ -45,6 +45,7 @@ import dials  # noqa: E402  (5c-2 2b)
 import mood  # noqa: E402  (5c-2 2c)
 import variety  # noqa: E402  (Step B 2026-11-08: repeat catcher)
 import nature  # noqa: E402  (Step B 2026-11-08: a nature (personality) per ordinary NPC)
+import party  # noqa: E402  (Stage A1 2026-11-09: who travels with the player)
 
 CONFIG_PATH = os.environ.get("AVALLONE_BRAIN_CONFIG", "/etc/avallone-brain/config.json")
 
@@ -961,7 +962,8 @@ class Handler(BaseHTTPRequestHandler):
                 utterance_sha=decency.fingerprint(utterance), say=say)
             # 2b (design B4): category only, bound to this request - the shard records it once per pair per day.
             # Codex 2b code review F2: only for direct use, never for a quoted / reported / condemned line.
-            out = {"ok": True, "say": say, "action": "none", "model": "fixed"}
+            out = {"ok": True, "say": say, "action": "none", "model": "fixed",
+                   "kind": "decency"}   # Stage A1 (Codex A1-3): the shard's party count skips these, penalty on or off
             if CFG["conduct_penalty"] and decency.direct_use(utterance):
                 out["conduct"] = "hateful_language"
             self.send_json(200, out)
@@ -1268,6 +1270,20 @@ class Handler(BaseHTTPRequestHandler):
             except Exception as e:
                 log(event="dials", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
         gen.update(standing=standing, layout="v2" if v2 else "v1")
+        # Stage A1 (2026-11-09): who travels with this person - companions by name + title, pets by species (a pet's own
+        # name only as a {PETn} token, bound in at the end). Townsfolk and Mirabel only; a companion's own reply (v2) never
+        # gets it. A problem costs the paragraph, never the reply.
+        pty = None
+        if not v2 and isinstance(req.get("party"), dict):
+            try:
+                names = [str(p.get("name") or "") for p in roster]
+                names += [str(p.get("name") or "") for p in ((req.get("named") or {}).get("roster") or []) if isinstance(p, dict)]
+                pty = party.parse(req, names)
+                if pty:
+                    situation = (situation + "\n\n" + party.block(pty)).strip()
+            except Exception as e:
+                pty = None
+                log(event="party", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
         stats = {}
         try:
             # "about": the model sees the sentinel where the line named the person, so question and gossip match.
@@ -1310,6 +1326,7 @@ class Handler(BaseHTTPRequestHandler):
                         return cleaned, None
                 return text, why_
             gen_scrubbed = []
+            decency_line = False   # Codex A1 fixes review (P3): "kind" follows what is DELIVERED, not the first refusal
             say, why = settle(say)
             if why:
                 binding = why
@@ -1320,6 +1337,7 @@ class Handler(BaseHTTPRequestHandler):
                 if left < 1.5:
                     if why.startswith("decency"):
                         say, action, why = decency.fixed_line(rid), "none", None   # no time: the fixed line at once
+                        decency_line = True
                     else:
                         raise ValueError(f"filtered ({why}), no time to retry: {say!r}")
                 if why:
@@ -1332,6 +1350,7 @@ class Handler(BaseHTTPRequestHandler):
                     say, why2 = settle(say)
                     if why2 and (why.startswith("decency") or why2.startswith("decency")):
                         say, action = decency.fixed_line(rid), "none"   # a second refusal always ends in the fixed line
+                        decency_line = True
                     elif why2 and offer is not None and offer.mode == "follow":
                         # Codex 2a finding 2: a bounded answer instead of silence on a follow-up
                         log(event="rumour", op="follow_fallback", request_id=rid, why=why, why2=why2)
@@ -1411,6 +1430,8 @@ class Handler(BaseHTTPRequestHandler):
             # Codex R7-1 (2026-11-06): a secret reveal keeps its own budget (reveal_max_chars, 480) - the shard marks it
             # revealed once spoken, so it must never be cut to the ordinary 300.
             final_max = CFG["reveal_max_chars"] if reveal_id else REPLY_MAX_CHARS
+            if pty is not None and not reveal_id:
+                say = party.bind(say, pty)   # Stage A1: checked pet names in for their tokens, then decency again
             hint_note, pre_hint = None, say
             if not reveal_id and not (binding or "").startswith("decency"):   # 2026-11-04: shop line by code
                 tease_room = (len(offer.tease) + 1 if offer is not None and offer.tease else 0)
@@ -1445,11 +1466,14 @@ class Handler(BaseHTTPRequestHandler):
                 **({"tease_dropped": True} if tease_dropped else {}),
                 **({"mood": mood_log} if mood_log else {}),
                 **({"variety": variety_log} if variety_log else {}),
+                **({"party": party.log_fields(pty, say)} if pty else {}),
                 **({"rumour": {"ids": offer.ids, "told": told, "mode": offer.mode, "speaker": offer.is_speaker,
                                "sentinel_used": bool(offer.sentinel) and offer.sentinel in say,
                                "first_refusal": binding, "angle": offer.angle, "name_mode": "name" if offer.name else "sentinel"}}
                    if offer else {}))
             out = {"ok": True, "say": say, "action": action, "model": CFG["model"]}
+            if decency_line:
+                out["kind"] = "decency"   # Stage A1 (Codex A1-3 + fixes review): the fixed decency line WAS delivered
             if mem_cards:   # 5c-2 2a: the shard records these (ids only) once the reply is really delivered
                 out["memory_cards"] = mem_cards
             if offer:   # Codex finding 2: always flag live-gossip context; ids = only what was really told

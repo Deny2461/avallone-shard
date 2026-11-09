@@ -45,7 +45,8 @@ public sealed class SidecarAiClient : IAiNpcClient
             request.RevealSecretId,
             request.Rumours,
             request.Named,
-            request.Standing
+            request.Standing,
+            request.Party
         );
 
         using var response = await _http.PostAsJsonAsync(request.Mode switch { "plan" => "v1/npc/plan", "summarize" => "v1/npc/summarize", _ => "v1/npc/respond" }, body, _json, token).ConfigureAwait(false);
@@ -58,7 +59,8 @@ public sealed class SidecarAiClient : IAiNpcClient
 
         return AiReply.Success(reply.Say.Trim(), reply.Model) with
         {
-            Action = reply.Action ?? "none", Rumour = reply.Rumour, MemoryCards = reply.MemoryCards, Conduct = reply.Conduct
+            Action = reply.Action ?? "none", Rumour = reply.Rumour, MemoryCards = reply.MemoryCards, Conduct = reply.Conduct,
+            Kind = reply.Kind
         };
     }
 
@@ -85,10 +87,12 @@ public sealed class SidecarAiClient : IAiNpcClient
         string RevealSecretId,
         RumourAsk Rumours,
         NamedAsk Named,
-        StandingAsk Standing
+        StandingAsk Standing,
+        TravelParty.PartyAsk Party
     );
 
     private sealed record SidecarResponse(
-        bool Ok, string Say, string Action, string Model, string Error, RumourInfo Rumour, string[] MemoryCards, string Conduct
+        bool Ok, string Say, string Action, string Model, string Error, RumourInfo Rumour, string[] MemoryCards, string Conduct,
+        string Kind
     );
 }

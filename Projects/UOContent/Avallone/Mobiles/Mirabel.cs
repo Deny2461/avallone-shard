@@ -190,7 +190,8 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
             // Phase 5b: Mirabel keeps the Blue Boar in Britain - she hears Britain's gossip wherever she stands.
             Rumours = Server.Avallone.Rumours.RumourSpeech.Ask(this, from, text, history.Count == 0, follow, "Britain"),
             Named = Server.Avallone.Named.NamedNpcs.Ask(this, from), // Phase 5c: her memories of this visitor
-            Standing = Relations.Standing(this, from, "Britain") // 5c-2 2b: same town as her gossip
+            Standing = Relations.Standing(this, from, "Britain"), // 5c-2 2b: same town as her gossip
+            Party = Server.Avallone.AI.TravelParty.For(this, from) // Stage A1: companions + pets she can see
         };
 
         Direction = GetDirectionTo(from);
@@ -214,8 +215,9 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
 
             Direction = GetDirectionTo(from);
             Say(spoken);
+            Server.Avallone.AI.TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency");
             Remember(history, "player", text);
-            Remember(history, "npc", Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken));
+            Remember(history, "npc", Server.Avallone.AI.TravelParty.ForHistory(Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken), request.Party));
             Server.Avallone.Named.NamedNpcs.OnExchange(this, from, text); // the visitor's own words, for this visit's notes
             Server.Avallone.Named.NamedNpcs.OnDelivered(this, from, reply.MemoryCards); // 5c-2 2a: which cards were offered
             Server.Avallone.AI.Relations.Conduct(this, from, reply); // 2b: warmth -20 for a slur, once a day

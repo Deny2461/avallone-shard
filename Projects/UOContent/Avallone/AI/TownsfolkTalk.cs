@@ -541,7 +541,8 @@ public static class TownsfolkTalk
             PersonaVars = PersonaVarsFor(npc),
             History = Server.Avallone.Rumours.RumourSpeech.History(talk.History),
             Rumours = Server.Avallone.Rumours.RumourSpeech.Ask(npc, from, text, firstLine, follow, Server.Avallone.Rumours.RumourSpeech.TownOf(npc)),
-            Standing = Relations.Standing(npc, from) // 5c-2 2b
+            Standing = Relations.Standing(npc, from), // 5c-2 2b
+            Party = TravelParty.For(npc, from) // Stage A1: companions + pets the NPC can see
         };
 
         npc.Direction = npc.GetDirectionTo(from);
@@ -568,12 +569,13 @@ public static class TownsfolkTalk
 
         npc.Direction = npc.GetDirectionTo(from);
         npc.Say(spoken);
+        TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency"); // A1 floor
         Relations.Visited(npc, from); // 5c-2 2b: familiarity + the day's warmth, only once a reply was really said
         Relations.Conduct(npc, from, reply);
         talk.Last = Core.Now;
         talk.FollowRumour = Server.Avallone.Rumours.RumourSpeech.FollowId(reply);
         Remember(talk.History, "player", text);
-        Remember(talk.History, "npc", Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken));
+        Remember(talk.History, "npc", TravelParty.ForHistory(Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken), request.Party));
     }
 
     private static void Remember(List<AiLine> history, string speaker, string text)

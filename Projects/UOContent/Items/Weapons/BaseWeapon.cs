@@ -1313,7 +1313,9 @@ public abstract partial class BaseWeapon
             var discordanceEffect = 0;
 
             // Defender loses -0/-28% if under the effect of Discordance.
-            if (Discordance.GetEffect(attacker, ref discordanceEffect))
+            // Avallone 2026-11-09 (the owner; upstream ModernUO has the same bug): this checked the
+            // ATTACKER, so a discorded creature made its target easier to hit. It is the defender's defence that drops.
+            if (Discordance.GetEffect(defender, ref discordanceEffect))
             {
                 bonus -= discordanceEffect;
             }

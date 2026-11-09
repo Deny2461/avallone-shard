@@ -520,6 +520,11 @@ namespace Server.Guilds
 
     public class Guild : BaseGuild
     {
+        // Avallone 2026-11-09 (the owner; upstream ModernUO has the same bug): what the OTHER side of a
+        // timed-out war is told. Was (status + 1 % 2) = status + 1, so the loser's opponent heard "Draw" instead of "Win".
+        public static WarStatus OpponentWarStatus(WarStatus status) =>
+            status switch { WarStatus.Win => WarStatus.Lose, WarStatus.Lose => WarStatus.Win, _ => status };
+
         public static readonly int RegistrationFee = 25000;
         public static readonly int AbbrevLimit = 4;
         public static readonly int NameLimit = 40;
@@ -986,10 +991,7 @@ namespace Server.Guilds
                         continue;
                     }
 
-                    if (status != WarStatus.Draw)
-                    {
-                        status = (WarStatus)((int)status + 1 % 2);
-                    }
+                    status = OpponentWarStatus(status);
 
                     if (otherInAlliance)
                     {

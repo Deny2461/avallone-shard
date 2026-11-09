@@ -110,6 +110,8 @@ public sealed record AiRequest(
 
     // 5c-2 2b: set on conversation requests to dial-eligible NPCs (Relations.Standing); null = no dials.
     public StandingAsk Standing { get; init; }
+    // Stage A1 (2026-11-09): who travels with the player, as the NPC can see them (TravelParty.For); null = nobody.
+    public TravelParty.PartyAsk Party { get; init; }
 
     // One conversation lease per NPC + subject: a second request while one is pending is refused.
     public string LeaseKey => $"{NpcId:N}:{SubjectId:N}";
@@ -130,6 +132,8 @@ public readonly record struct AiReply(AiOutcome Outcome, string Text, string Mod
 
     // 5c-2 2b (B4): "hateful_language" when the player's line tripped the narrow slur list (category only, no text).
     public string Conduct { get; init; }
+    // Stage A1 (Codex A1-3): "decency" when the brain answered with a fixed decency line; null for an ordinary reply.
+    public string Kind { get; init; }
 
     public static AiReply Success(string text, string model) => new(AiOutcome.Ok, text, model, 0, null);
 
