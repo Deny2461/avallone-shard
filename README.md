@@ -48,6 +48,8 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
   and then speak to your companion or remark on your horse, by the name you gave it.
 - **Your companion answers for herself.** When a townsperson speaks to your companion by name, the two may trade a few
   lines of their own: usually one to three, once in a while a longer chat. They stop as soon as you speak.
+- **They remember having met.** A townsperson who has chatted with your companion knows her next time, and she knows them.
+  They remember that they talked, not what was said.
 - **A wandering sellsword lives his own life.** He travels, hunts, sells his loot, banks and rests, whether
   or not anyone is watching.
 

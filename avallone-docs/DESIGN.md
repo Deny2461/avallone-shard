@@ -230,13 +230,32 @@ When a townsperson or the innkeeper has just spoken to your companion by name, t
 
 - **One at a time, and short.** Only one such exchange runs on the whole shard at once. Its length is drawn when it starts:
   one to three lines seven times in ten, four to six two times in ten, seven to ten one time in ten. Each line waits a few
-  seconds, longer after a long line, so it reads like talk.
-- **You always come first.** The moment a player nearby speaks, the exchange ends. Its model call is cancelled at the brain,
-  and no new exchange line is started while a player's conversation is waiting for the model.
+  seconds, longer after a long line, so it reads like talk. If the closing line is a question, the other speaker gets one
+  short answer.
+- **You always come first.** The moment you speak, or another conversation needs the model, the exchange ends. Its model
+  call is cancelled at the brain, and no new exchange line is started while a player's conversation is waiting for the model.
 - **Talk only.** Nothing changes hands and nothing is stored: an exchange does not touch trust, memory or rumours. A line
   that fails any of the usual reply checks, or comes back late, is simply not said, and the exchange ends there.
 - **It cannot run away.** After an exchange the NPC rests for a few minutes, and a couple of ordinary replies must pass
   before the next one. A game master can switch exchanges off in game without a restart.
+
+### Who has talked with whom
+
+When an exchange has said at least one line, each of the two speakers gets one fact in the memory ledger: who they talked
+with, on which day, and how many lines. The fact holds an id, never a name, and none of the words that were said.
+
+- **Read back as one sentence.** The next time the two meet, the prompt says they have chatted before (once, a few times,
+  often) and when (earlier today, yesterday, a few days ago, a while back), and to treat the other as someone they know.
+  It also says they do not remember what was said. When there is no record, the prompt says nothing at all, because "no
+  record" can also mean forgotten.
+- **A short list that fades.** An NPC keeps the eight people it talked with most recently, and forgets a chat after a set
+  amount of game time. The day words come from the calendar; the fading runs on the game's own clock, so a week with nobody
+  logged in wipes nothing.
+- **Walled off.** No other part of memory can see these facts: not a companion's memories of her owner, not the search over
+  memories, not the step where a companion forms beliefs. They have their own reader and nothing else.
+- **Restore-safe and deletable.** The facts live in the same ledger as every other memory, so a restored world forgets chats
+  that never happened in it, and deleting a character hides the facts recorded in that character's company.
+- **Optional by construction.** If the reader fails for any reason, the sentence is left out and the conversation goes on.
 
 ## 6. Memory
 

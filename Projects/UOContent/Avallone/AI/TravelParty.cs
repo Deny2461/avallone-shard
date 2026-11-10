@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 using System.Collections.Generic;
 using System.Text.RegularExpressions;
 using Server.Mobiles;
@@ -18,11 +19,18 @@ public static class TravelParty
     public const int MaxPets = 3;          // plus the mount being ridden
     public const int NudgeAfter = 7;       // misses in a row before the next reply is nudged
 
-    public sealed record PartyCompanion(string Name, string Title);
+    // Id: Stage A3, sent only together with Known. Left out of the request entirely when null, so with the NPC-memory
+    // switch off the wire format is byte for byte Stage A1.
+    public sealed record PartyCompanion(
+        string Name, string Title, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string Id = null
+    );
     public sealed record PartyPet(string Species, string Label, bool Ridden);
     // Roster: every player name the gossip roster knows (RumourSpeech.CurrentRoster, cached 60 s), so the brain's
     // name-clash rules hold on every request, not only when gossip came along (Codex A1-2).
-    public sealed record PartyAsk(PartyCompanion[] Companions, PartyPet[] Pets, bool Nudge, string[] Roster = null);
+    public sealed record PartyAsk(
+        PartyCompanion[] Companions, PartyPet[] Pets, bool Nudge, string[] Roster = null,
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KnownAsk Known = null
+    );
 
     private static readonly Dictionary<Serial, int> _misses = new();
     private static readonly Regex Word = new(@"[a-z0-9']+", RegexOptions.Compiled);
@@ -37,6 +45,9 @@ public static class TravelParty
 
         var companions = new List<PartyCompanion>();
         var pets = new List<PartyPet>();
+        // Stage A3: with the NPC-memory switch on, the brain may look up whether this NPC has traded lines with the
+        // companion before. Off = neither the read request nor a companion id is sent: the request is exactly A1's.
+        var known = Exchange.KnownNow(null);
 
         foreach (var m in npc.GetMobilesInRange(Range))
         {
@@ -50,7 +61,8 @@ public static class TravelParty
             {
                 if (companions.Count < MaxCompanions && !string.IsNullOrWhiteSpace(bc.Name))
                 {
-                    companions.Add(new PartyCompanion(bc.Name.Trim(), bc.Title?.Trim() ?? ""));
+                    var cid = known != null && bc is BaseCompanion { AiId: var id } && id != Guid.Empty ? id.ToString() : null;
+                    companions.Add(new PartyCompanion(bc.Name.Trim(), bc.Title?.Trim() ?? "", cid));
                 }
             }
             else if (!bc.Summoned && pets.Count < MaxPets && Species(bc) is { } sp)
@@ -69,7 +81,7 @@ public static class TravelParty
             return null;
         }
 
-        return new PartyAsk(companions.ToArray(), pets.ToArray(), NudgeDue(player), RosterNames());
+        return new PartyAsk(companions.ToArray(), pets.ToArray(), NudgeDue(player), RosterNames(), companions.Count > 0 ? known : null);
     }
 
     private static string[] RosterNames()

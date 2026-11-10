@@ -14,6 +14,7 @@ Rules (Codex Stage A design review F4):
 Memory only, nothing stored."""
 import re
 
+import acquaint
 import decency
 
 MAX_COMPANIONS = 2
@@ -61,7 +62,9 @@ def parse(req, roster_names=()):
         clash = bool(_words(name) & taken)
         if clash and not title:
             continue                                   # nothing safe to call them by
-        comps.append({"name": name, "title": title, "by_title": clash, "first": name.split()[0]})
+        cid = str(c.get("id") or "")
+        comps.append({"name": name, "title": title, "by_title": clash, "first": name.split()[0],
+                      "id": cid if acquaint._ID.match(cid) else ""})   # A3: only ever used to look the acquaintance up
     comp_words = set()
     for c in comps:
         comp_words |= _words(c["name"])
@@ -82,7 +85,7 @@ def parse(req, roster_names=()):
         pets.append({"species": sp, "label": label if ok else "", "token": tok, "ridden": bool(p.get("ridden"))})
     if not comps and not pets:
         return None
-    return {"companions": comps, "pets": pets, "nudge": raw.get("nudge") is True}
+    return {"companions": comps, "pets": pets, "nudge": raw.get("nudge") is True, "known": raw.get("known")}
 
 
 def _article(sp):
@@ -104,7 +107,17 @@ def pick(party, roll, companion_share, pet_share):
     return "quiet"
 
 
-def block(party, turn=None):
+def target(party):
+    """The companion a "companion" turn speaks to: (companion, what to call them)."""
+    if not party or not party["companions"]:
+        return None, ""
+    tgt = next((c for c in party["companions"] if not c["by_title"]), None)
+    if tgt is not None:
+        return tgt, tgt["name"].split()[0]
+    return party["companions"][0], party["companions"][0]["title"]
+
+
+def block(party, turn=None, known=""):
     """One paragraph for the prompt (data, never instructions from the player). Wording after the 2026-11-09 trials:
     v1 ("you may ... you need not") gave 0/24 unprompted mentions, the nudge reached only the pet (7/24, never the
     companion), and a pet's name was once used as if it were the traveller's. v2 (plain sight, "folk notice") gave 6/24 and
@@ -134,10 +147,11 @@ def block(party, turn=None):
     parts = ["Right beside the person you are talking to, in plain sight: " + "; ".join(seen) + ".",
              "Folk in town notice company like that, but your answer is for the traveller."]
     if turn == "companion" and party["companions"]:
-        tgt = next((c for c in party["companions"] if not c["by_title"]), None)
-        who = tgt["name"].split()[0] if tgt is not None else party["companions"][0]["title"]
+        tgt, who = target(party)
         parts.append(f"This time, add one short separate sentence to or about {who}"
-                     + (" (first name only)." if tgt is not None else "."))
+                     + (" (first name only)." if not tgt["by_title"] else "."))
+        if known:   # Stage A3: this NPC has traded lines with that companion before (facts only; see acquaint.py)
+            parts.append(known)
     elif turn in ("pet", "companion") and party["pets"]:
         parts.append(f"This time, add a short remark about their {party['pets'][0]['species']}.")
     else:

@@ -14,6 +14,7 @@ The model call, the reply checks and the logging live in brain.py (handle_exchan
 import json
 import re
 
+import acquaint
 import decency
 
 MAX_STEP = 9                      # steps 0..9, speakers alternating; the shard draws each exchange's length (1-10 lines)
@@ -116,15 +117,17 @@ def parse(req, common_words=frozenset()):
             raise Refused("transcript decency")
         transcript.append({"who": who, "text": mask_players(text, roster, common_words)})
     return {"id": xid, "step": step, "speaker": speaker, "addressee": addressee, "band": band,
-            "transcript": transcript, "roster": roster, "last": raw.get("last") is True or step == MAX_STEP}
+            "transcript": transcript, "roster": roster, "last": raw.get("last") is True or step == MAX_STEP,
+            "known": acquaint.parse_known(raw.get("known"))}   # A3: a read request only ({epoch, mpt, other_id}); never text
 
 
 def _called(p):
     return p["name"] + (f", {p['title']}" if p["title"] else "")
 
 
-def rules(ask):
-    """The paragraph added after the speaker's persona. Public facts only."""
+def rules(ask, known=""):
+    """The paragraph added after the speaker's persona. Public facts only. `known` (Stage A3): one sentence saying the two
+    have chatted before, built by acquaint.sentence from ledger facts - never from anything that was said."""
     me, other = ask["speaker"], ask["addressee"]
     if me["kind"] == "companion":
         parts = ["Right now you stand beside the traveller you journey with." + (" " + BANDS[ask["band"]] if ask["band"] else ""),
@@ -137,6 +140,8 @@ def rules(ask):
     else:
         parts = [f"A traveller stands before you with their travelling companion, {_called(other)}. You are talking with "
                  f"{other['first']} now - not with the traveller, who only stands by and listens."]
+    if known:
+        parts.append(known)
     parts.append(
         f"This is a passing word between you and {other['first']}: answer what was just said to you in one short sentence, "
         "two at most, in your own manner. Talk only: you cannot fetch, serve, sell, give or mend anything during this, so do "

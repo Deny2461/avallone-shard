@@ -1,4 +1,5 @@
 using System;
+using System.Text.Json.Serialization;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -64,11 +65,20 @@ public sealed record RumourInfo(string Sentinel, string CharId, string Descripto
 // Roster: real player names, for the brain's reply check only (never put in a prompt).
 public sealed record ExchangeVoice(string Kind, string Name, string Title);
 
+// Stage A3: a READ request for the brain's acquaintance reader - "have these two traded lines before?". The shard epoch
+// (the brain answers only once this start has reconciled), the memory clock now, and the other speaker's id. Never text.
+// In a PartyAsk the other id rides on each companion instead (OtherId stays null).
+public sealed record KnownAsk(
+    long Epoch, double Mpt, [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] string OtherId = null
+);
+
 public sealed record ExchangeLine(string Who, string Text);
 
 public sealed record ExchangeAsk(
     string Id, int Step, ExchangeVoice Speaker, ExchangeVoice Addressee, string TrustBand, ExchangeLine[] Transcript, string[] Roster,
-    bool Last = false   // this step is the exchange's closing line (its length is drawn per exchange)
+    bool Last = false,  // this step is the exchange's closing line (its length is drawn per exchange)
+    // Stage A3: null = the NPC-memory switch is off (no read is made); then it is left out of the request entirely
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KnownAsk Known = null
 );
 
 // One line of a conversation, oldest first. Speaker is "player" or "npc".

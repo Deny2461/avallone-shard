@@ -9,6 +9,7 @@
  "request_fade_memory_hours": 60,
  "habit_days": 3,
  "habit_fade_memory_hours": 120,
+ "acquaintance_fade_memory_hours": 120,
  "reinforce_step": 0.5,
  "reinforce_cap": 2.5,
  "hot": {

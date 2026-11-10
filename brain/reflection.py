@@ -38,7 +38,8 @@ class UnusableAnswer(Exception):
 # Facts only. Conversation = player claims; turning points are already permanent memories with their own text.
 SKIP_KINDS = ("conversation", "turning_point", "turning_point_revoked", "character_deleted",
               "deed",  # Phase 5a: world deeds feed rumours, never a companion's reflection
-              "visit_summary", "visited")  # Phase 5c: a player's claims never become a belief (poisoning rule)
+              "visit_summary", "visited",  # Phase 5c: a player's claims never become a belief (poisoning rule)
+              "talked_with")  # Stage A3: who an NPC chatted with is read only by the acquaintance reader
 
 # Controlled topic keys: one live belief per topic per pair, so the newest view replaces the old one.
 TOPICS = {
@@ -158,7 +159,7 @@ def _pending_reflections(self, idle_s=900, min_events=2, now=None, skip=(), limi
     with self.lock:
         pairs = self.db.execute(
             f"""SELECT npc_id, char_id, MAX(received_utc) last FROM events
-                WHERE status = 'live' AND char_id NOT IN ({memory.TOMBSTONED})
+                WHERE status = 'live' AND {memory.NOT_PRIVATE} AND char_id NOT IN ({memory.TOMBSTONED})
                 GROUP BY npc_id, char_id HAVING last <= ? ORDER BY last""", (cutoff,)).fetchall()
         for p in pairs:
             if (p["npc_id"], p["char_id"]) in skip:

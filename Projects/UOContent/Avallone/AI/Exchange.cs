@@ -27,6 +27,9 @@ namespace Server.Avallone.AI;
 // - Public only: the request carries the two speakers' names, titles and personas, a companion's coarse trust band (for
 //   her own prompt only) and what was said aloud. No history, memory, secrets, gear or dials. Nothing about an exchange
 //   is recorded anywhere - not in the memory ledger, not in either character's conversation history with the player.
+//   Stage A3 (2026-11-10, switch avallone.ai.npcMemory, off by default): when an exchange said at least one line, each
+//   speaker gets one ledger fact "talked_with" - WHO they traded lines with, the day and the memory clock. Never a word
+//   that was said, never a name. Read back only by the brain's acquaintance reader (Projects/Avallone-Stage-A3-NPC-Memory-Design.md).
 // - Talk only: no action from an exchange step is ever applied.
 // - The switch avallone.ai.exchanges is OFF by default (the owner: on after his first live play). RAM only.
 public static class Exchange
@@ -34,9 +37,12 @@ public static class Exchange
     private static readonly ILogger logger = LogFactory.GetLogger(typeof(Exchange));
 
     public const int MaxSteps = 10;     // the most lines an exchange can ever have after the opening one
-    public const int Range = 8;         // both speakers stay this close to the player
+    // Both speakers stay this close to the player. 8 until the owner's A3 play test (2026-11-10
+    // - a wandering townsperson drifted out mid-exchange); 12 is still well inside one screen.
+    public const int Range = 12;
 
     public static bool Enabled { get; private set; }
+    public static bool MemoryOn { get; private set; }   // Stage A3: record and read who has traded lines with whom
     public static TimeSpan NpcRest { get; set; } = TimeSpan.FromMinutes(4);   // per townsperson, booked before the first call
     public static int RepliesBetween { get; set; } = 2;                       // NPC replies a player hears between exchanges
     // the owner, chat, 2026-11-09 (after play test 2: every exchange was exactly three lines)
@@ -58,10 +64,13 @@ public static class Exchange
     // the owner's play test 2026-11-09: 1.5-2.5 s between lines read as. Now the pause
     // before a line is time to read the line it answers: PauseMin..PauseMin+PauseSpread, plus PausePerChar for each
     // character of that line, never more than PauseCap.
-    public static TimeSpan PauseMin { get; set; } = TimeSpan.FromSeconds(3);
-    public static TimeSpan PauseSpread { get; set; } = TimeSpan.FromSeconds(1.5);
-    public static TimeSpan PausePerChar { get; set; } = TimeSpan.FromMilliseconds(20);
-    public static TimeSpan PauseCap { get; set; } = TimeSpan.FromSeconds(7);
+    // the owner's A3 play test (2026-11-10): - measured
+    // 6.2-7.6 s from line to line (3-4.5 s + 20 ms a character, plus the model). Now 2-3 s + 10 ms a character, never
+    // more than 4.5 s: about 4-5 s from line to line with the model's time. (1.5-2.5 s flat was "too fast", 2026-11-09.)
+    public static TimeSpan PauseMin { get; set; } = TimeSpan.FromSeconds(2);
+    public static TimeSpan PauseSpread { get; set; } = TimeSpan.FromSeconds(1);
+    public static TimeSpan PausePerChar { get; set; } = TimeSpan.FromMilliseconds(10);
+    public static TimeSpan PauseCap { get; set; } = TimeSpan.FromSeconds(4.5);
 
     internal static TimeSpan PauseFor(string answered, double roll)
     {
@@ -74,6 +83,12 @@ public static class Exchange
     internal static Func<int> PickLength = DefaultLength;
     internal static Action<Mobile, string> Speak = (m, text) => m.Say(text);
     internal static Func<PlayerMobile, bool> Online = pm => pm.NetState != null;
+    // Stage A3: how a "talked_with" fact reaches the ledger. True only when it is really in the saved outbox. The Guid
+    // overload on purpose: it never counts toward a companion's secrets or personality.
+    internal static Func<Guid, Mobile, string, object, bool> Recorder = AiLedger.TryRecord;
+    internal static Func<string> Today = () => Named.NamedNpcs.Today(Core.Now);
+    internal static Func<long> EpochNow = () => AiLedger.Epoch;
+    internal static Func<double> MemoryClock = () => Rumours.PlayedClock.MemorySeconds;
 
     public sealed record Voice(
         Mobile Mobile, string Kind, Guid AiId, string PersonaKey, Dictionary<string, string> Vars, string Name, string Title,
@@ -90,6 +105,7 @@ public static class Exchange
         public int Steps;               // how many lines this exchange may run to (drawn at its start)
         public bool CallOut;            // a step's model call is out right now
         public bool Unanswered;         // the last call ended WITHOUT the brain's answer (timeout, transport failure)
+        public bool Extended;           // one extra line was granted because the closing line was a question
         public readonly List<ExchangeLine> Transcript = [];
         public string[] Roster;
         public long DeadlineAt;
@@ -103,6 +119,10 @@ public static class Exchange
     private static readonly Dictionary<Serial, int> _revision = new();
     private static readonly Dictionary<Serial, long> _restUntil = new();
     private static readonly Dictionary<Serial, int> _since = new();
+    // Stage A3: (who remembers, the other speaker) already recorded on _talkedDay. RAM only: after a restart a pair can be
+    // recorded once more that day, which is harmless - the brain counts distinct days, never rows.
+    private static readonly HashSet<(Guid, Guid)> _talked = new();
+    private static string _talkedDay = "";
     private static readonly Regex Word = new(@"[a-z0-9']+", RegexOptions.Compiled);
 
     public static bool Running => _active != null;
@@ -121,20 +141,21 @@ public static class Exchange
         Enabled = ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchanges", false);
         NpcRest = TimeSpan.FromMinutes(Math.Max(0, ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangeNpcRestMinutes", 4)));
         RepliesBetween = Math.Max(0, ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangeRepliesBetween", 2));
-        PauseMin = TimeSpan.FromSeconds(Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangePauseSeconds", 3), 0, 6));
+        PauseMin = TimeSpan.FromSeconds(Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangePauseSeconds", 2), 0, 6));
         MaxLines = Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangeMaxLines", MaxSteps), 1, MaxSteps);
+        MemoryOn = ServerConfiguration.GetOrUpdateSetting("avallone.ai.npcMemory", false);
         EventSink.Speech += OnSpeech;
         CommandSystem.Register("Exchanges", AccessLevel.Administrator, Exchanges_OnCommand);
     }
 
     public static void Initialize() =>
         logger.Information(
-            "Avallone exchanges: {State} (NPC rest {Rest}, {Between} replies between, up to {Steps} lines, {Pause} s+ between lines)",
-            Enabled ? "ON" : "off", NpcRest, RepliesBetween, MaxLines, PauseMin.TotalSeconds
+            "Avallone exchanges: {State} (NPC rest {Rest}, {Between} replies between, up to {Steps} lines, {Pause} s+ between lines); NPC memory of who they talked with: {Memory}",
+            Enabled ? "ON" : "off", NpcRest, RepliesBetween, MaxLines, PauseMin.TotalSeconds, MemoryOn ? "ON" : "off"
         );
 
-    [Usage("Exchanges [on|off|status]")]
-    [Description("Avallone: a companion and the townsperson who just spoke to her may trade a line or two. on/off is saved.")]
+    [Usage("Exchanges [on|off|status|memory on|memory off]")]
+    [Description("Avallone: a companion and the townsperson who just spoke to her may trade a line or two. on/off is saved. 'memory on|off': whether they remember having talked (saved).")]
     public static void Exchanges_OnCommand(CommandEventArgs e)
     {
         var verb = e.Length > 0 ? e.GetString(0).ToLowerInvariant() : "status";
@@ -148,9 +169,20 @@ public static class Exchange
             }
         }
 
+        if (verb == "memory" && e.Length > 1 && e.GetString(1).ToLowerInvariant() is "on" or "off")
+        {
+            // Stage A3. Off = nothing more is recorded and no read is asked for; what the ledger holds is left alone.
+            MemoryOn = e.GetString(1).ToLowerInvariant() == "on";
+            ServerConfiguration.SetSetting("avallone.ai.npcMemory", MemoryOn ? "true" : "false");
+        }
+
         e.Mobile.SendMessage(
             $"Exchanges are {(Enabled ? "ON" : "OFF")} (saved); {(Running ? "one is running" : "none running")}; " +
             $"{Started} started, {Completed} ran to the end, {LinesSaid} lines said; last end: {(LastEnd.Length > 0 ? LastEnd : "-")}."
+        );
+        e.Mobile.SendMessage(
+            $"NPC memory of who they talked with is {(MemoryOn ? "ON" : "OFF")} (saved); {TalksRecorded} recorded, " +
+            $"{TalksNotRecorded} not recorded (memory off or full) since start."
         );
     }
 
@@ -403,7 +435,8 @@ public static class Exchange
                         speaker.Mobile is BaseCompanion c ? CompanionTrust.Band(c.GetTrust(run.Player)) : "",
                         run.Transcript.ToArray(),
                         run.Roster,
-                        step == run.Steps - 1
+                        step == run.Steps - 1,
+                        KnownNow(other.AiId)
                     )
                 };
 
@@ -461,6 +494,16 @@ public static class Exchange
                     "Exchange step {Id} {Step}/{Max}: {Speaker} said \"{Text}\" ({Elapsed} ms)",
                     run.Id, step + 1, run.Steps, speaker.Name, text, AiGateway.Clock() - began
                 );
+
+                // the owner's A3 play test (2026-11-10): the closing line was a question
+                // and nobody answered it. The model is asked to close without one, but does not always. So code decides:
+                // a closing question earns the other speaker ONE short answer, once, and never past the cap.
+                if (step == run.Steps - 1 && !run.Extended && text.EndsWith('?') && run.Steps < Math.Clamp(MaxLines, 1, MaxSteps))
+                {
+                    run.Extended = true;
+                    run.Steps++;
+                    run.DeadlineAt += (long)(PauseCap + StepBudget).TotalMilliseconds;
+                }
             }
 
             End(run, "complete");
@@ -513,7 +556,94 @@ public static class Exchange
             Completed++;
         }
 
+        if (run.Lines > 0)
+        {
+            RecordTalk(run); // Stage A3: also when it was cut off after a line - they did talk
+        }
+
         logger.Information("Exchange end {Id} ({Reason}) after {Lines} line(s)", run.Id, reason, run.Lines);
+    }
+
+    // ---- Stage A3: who has traded lines with whom ------------------------------------------------------------------
+
+    public static int TalksRecorded { get; private set; }
+    public static int TalksNotRecorded { get; private set; }
+
+    // The read request for the brain, or null: switch off, or the ledger has no epoch yet. `other` null = a party request
+    // (the companions carry their own ids).
+    public static KnownAsk KnownNow(Guid? other)
+    {
+        if (!MemoryOn)
+        {
+            return null;
+        }
+
+        var epoch = EpochNow();
+        var mpt = MemoryClock();
+        if (epoch <= 0 || double.IsNaN(mpt) || double.IsInfinity(mpt) || mpt < 0 || other == Guid.Empty)
+        {
+            return null;
+        }
+
+        return new KnownAsk(epoch, mpt, other?.ToString());
+    }
+
+    // One fact per speaker: "I traded lines with <the other one's id> today". Each direction is enqueued and marked by
+    // itself (Codex design R2): a full outbox between the two must not mark the second as recorded.
+    private static void RecordTalk(Run run)
+    {
+        if (!MemoryOn || run.Player == null || run.Voices is not { Length: 2 })
+        {
+            return;
+        }
+
+        var day = Today();
+        if (day != _talkedDay || _talked.Count > 5000)
+        {
+            _talked.Clear();
+            _talkedDay = day;
+        }
+
+        var mpt = MemoryClock();
+        if (double.IsNaN(mpt) || double.IsInfinity(mpt) || mpt < 0)
+        {
+            return;
+        }
+
+        for (var i = 0; i < 2; i++)
+        {
+            var me = run.Voices[i];
+            var other = run.Voices[1 - i];
+            if (me.AiId == Guid.Empty || other.AiId == Guid.Empty || _talked.Contains((me.AiId, other.AiId)))
+            {
+                continue;
+            }
+
+            var facts = new
+            {
+                day, mpt, other_kind = other.Kind, other_id = other.AiId.ToString(), lines = Math.Clamp(run.Lines, 1, MaxSteps)
+            };
+            bool ok;
+            try
+            {
+                ok = Recorder(me.AiId, run.Player, "talked_with", facts);
+            }
+            catch (Exception ex)
+            {
+                logger.Warning(ex, "Exchange {Id}: could not record who talked", run.Id);
+                ok = false;
+            }
+
+            if (ok)
+            {
+                _talked.Add((me.AiId, other.AiId));
+                TalksRecorded++;
+            }
+            else
+            {
+                TalksNotRecorded++;
+            }
+        }
     }
 
     // Codex A2-R2: the brain is told the exchange is over - it drops the running step, and refuses any step of this
@@ -577,7 +707,7 @@ public static class Exchange
         NpcRest = TimeSpan.FromMinutes(4);
         RepliesBetween = 2;
         StepBudget = TimeSpan.FromSeconds(6);
-        PauseMin = TimeSpan.FromSeconds(3);
+        PauseMin = TimeSpan.FromSeconds(2);
         MaxLines = MaxSteps;
         CancelWait = TimeSpan.FromSeconds(3);
         _settling = 0;
@@ -585,5 +715,15 @@ public static class Exchange
         PickLength = DefaultLength;
         Speak = (m, text) => m.Say(text);
         Online = pm => pm.NetState != null;
+        MemoryOn = false;
+        _talked.Clear();
+        _talkedDay = "";
+        TalksRecorded = TalksNotRecorded = 0;
+        Recorder = AiLedger.TryRecord;
+        Today = () => Named.NamedNpcs.Today(Core.Now);
+        EpochNow = () => AiLedger.Epoch;
+        MemoryClock = () => Rumours.PlayedClock.MemorySeconds;
     }
+
+    internal static void SetMemoryForTests(bool on) => MemoryOn = on;
 }

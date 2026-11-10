@@ -17,7 +17,7 @@ import unicodedata
 from datetime import datetime, timezone
 
 SCHEMA_VERSION = 1   # event schema the shard sends
-DB_VERSION = 5       # 5 = events_npc_kind index, 5c-2 2c (mood reads one NPC across all characters);
+DB_VERSION = 6       # 6 = events_talked index, Stage A3 (acquaintance reader); 5 = events_npc_kind index, 5c-2 2c;
                     # PRAGMA user_version (2 = full-text index + npc remaps, 4a2; 3 = reflections + beliefs, 4c2;
                     # 4 = legacy_marks, 5c-2 2a)
 
@@ -32,7 +32,12 @@ KINDS = {
     "traded",                    # 5c-2 2b: a real vendor transfer, at most one per NPC + character + Central day
     "gift_given",                # 5c-2 2b: an accepted tip or liked gift, at most one per NPC + character + Central day
     "player_used_hateful_language",  # 5c-2 2b (B4): a line on the narrow slur list, once per NPC + character + day, no text
+    "talked_with",               # Stage A3: who an NPC traded lines with (facts only). Read ONLY by acquaintances().
 }
+# Stage A3 (Codex design R1-1): kinds no ordinary reader may ever see - not retrieval, not the full-text index, not
+# reflection. Each has its own dedicated reader.
+PRIVATE_KINDS = ("talked_with",)
+NOT_PRIVATE = "kind NOT IN (" + ", ".join(f"'{k}'" for k in PRIVATE_KINDS) + ")"
 ITEM = re.compile(r"^((?:pet|petfix)\|[a-z]+( [a-z]+)?\|[A-Z][A-Za-z'\-]{1,15}|trade\|[a-z]+(?: and [a-z]+)?|home\|[A-Z][A-Za-z' ]{1,20}|request\|[^|]{3,90})$")
 CARD_ID = re.compile(r"^[a-z]:[A-Za-z0-9:_\-]{1,40}$")
 VISIT_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
@@ -45,7 +50,7 @@ IMPORTANCE = {"owner_died": 5, "owner_resurrected": 5, "left_over_cruelty": 5, "
               "region_entered": 1, "conversation": 1, "secret_revealed": 5, "turning_point": 5,
               "turning_point_revoked": 0, "session_summary": 3,
               "gear_given": 3, "gear_returned": 2, "gear_refused": 2, "visit_summary": 2, "visited": 0,
-              "reply_delivered": 0, "traded": 0, "gift_given": 0, "player_used_hateful_language": 0}
+              "reply_delivered": 0, "traded": 0, "gift_given": 0, "player_used_hateful_language": 0, "talked_with": 0}
 STOPWORDS = set("""a an the and or but if then so to of in on at for with from by about as is are was were be been am
 do does did have has had you your yours me my mine we our us it its this that these those there here what when where who
 why how can could would should will shall may might must not no yes i i'm im you're youre it's its let's lets just
@@ -251,6 +256,21 @@ class Ledger:
                 except Exception:
                     self.db.in_transaction and self.db.execute("ROLLBACK")
                     raise
+            version = 5
+        if version < 6:
+            # Stage A3 (Codex design R1-5/R2): the acquaintance reader walks ONE NPC's talked_with rows newest first.
+            # Partial index, rebuildable, no data. From here on a brain that only knows version 5 refuses this database:
+            # the brain is never rolled back past this build (design section 6).
+            with self.lock:
+                self.db.execute("BEGIN IMMEDIATE")
+                try:
+                    self.db.execute("CREATE INDEX IF NOT EXISTS events_talked ON events (npc_id, epoch DESC, seq DESC) "
+                                    "WHERE kind = 'talked_with' AND status = 'live'")
+                    self.db.execute("PRAGMA user_version = 6")
+                    self.db.execute("COMMIT")
+                except Exception:
+                    self.db.in_transaction and self.db.execute("ROLLBACK")
+                    raise
         import reflection
         reflection.check_schema(self.db)
 
@@ -291,6 +311,9 @@ class Ledger:
                         if kind in ("visit_summary", "visited", "reply_delivered", "traded", "gift_given",
                                     "player_used_hateful_language"):
                             check_named(kind, ev.get("facts"))
+                        if kind == "talked_with":
+                            import acquaint
+                            acquaint.check_facts(ev.get("facts"))
                         facts = clean_facts(ev.get("facts") or {})
                         at = clean_text(ev.get("at_utc", ""), 30)
                     except (KeyError, TypeError, ValueError) as e:
@@ -306,7 +329,7 @@ class Ledger:
                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                         (eid, epoch, seq, npc, char, kind, facts, at, SCHEMA_VERSION, status, now_utc()),
                     )
-                    if self.db.total_changes != before:
+                    if self.db.total_changes != before and kind not in PRIVATE_KINDS:   # A3: never searchable
                         self.db.execute("INSERT INTO events_fts (event_id, body) VALUES (?, ?)",
                                         (eid, fts_body(kind, json.loads(facts))))
                     if kind == "character_deleted" and status == "live":
@@ -413,8 +436,8 @@ class Ledger:
             if self.db.execute(f"SELECT 1 FROM ({TOMBSTONED}) WHERE char_id = ?", (char_id,)).fetchone():
                 return []
             rows = self.db.execute(
-                """SELECT event_id, kind, facts, at_utc FROM events
-                   WHERE npc_id = ? AND char_id = ? AND status = 'live'
+                f"""SELECT event_id, kind, facts, at_utc FROM events
+                   WHERE npc_id = ? AND char_id = ? AND status = 'live' AND {NOT_PRIVATE}
                    ORDER BY epoch DESC, seq DESC LIMIT ?""",
                 (npc_id, char_id, int(limit)),
             ).fetchall()
@@ -676,7 +699,7 @@ def _retrieve(self, npc_id, char_id, utterance, skip_conversations=0, budget_cha
     with self.rlock:
         if self.rdb.execute(f"SELECT 1 FROM ({TOMBSTONED}) WHERE char_id = ?", (char_id,)).fetchone():
             return [] if records else ([], [])
-        pair = "npc_id = ? AND char_id = ? AND status = 'live' AND kind != 'turning_point_revoked'"
+        pair = "npc_id = ? AND char_id = ? AND status = 'live' AND kind != 'turning_point_revoked' AND " + NOT_PRIVATE
         # §21: money exchanges are never recalled, and are not counted here either, so this skip set is exactly the
         # history restore's (_history) when the shard sent none.
         # Codex GH-Pub R5-2 (2026-11-07): the scan stops once the skip set is full (it used to walk the pair's whole
@@ -913,7 +936,63 @@ def _npc_rows(self, npc_id, epoch, kinds=("visited", "gift_given"), day=None):
              "kind": r["kind"], "facts": json.loads(r["facts"])} for r in rows]
 
 
+def _acquaintances(self, npc_id, epoch, now_mpt, fade_s, tail=400, queue=8):
+    """Stage A3: who this NPC has traded lines with, newest speakers first: {other_id: {"days": n, "last_day": day}} for at
+    most `queue` speakers; {} when there is nobody; None when memory is not reconciled for this shard epoch (unavailable is
+    NOT the same as empty). One read transaction: reconcile state, tombstones and rows are one snapshot.
+    Bounded (also in the number of deleted characters in the world - only the examined rows' owners are looked up):
+    at most `tail` rows are EXAMINED (newest first, by the events_talked index), counting the ones skipped for a
+    deleted character, a row from the clock's future or one older than `fade_s` memory-seconds. Whoever lies beyond that
+    tail is forgotten. Rows are grouped by speaker and distinct days counted BEFORE the queue cap."""
+    with self.rlock:
+        self.rdb.execute("BEGIN")
+        try:
+            row = self.rdb.execute("SELECT new_epoch, verdict FROM reconciliations ORDER BY rowid DESC LIMIT 1").fetchone()
+            ok = bool(row) and isinstance(epoch, int) and not isinstance(epoch, bool) and int(row[0]) == epoch \
+                and row[1] in ("ok", "fresh")
+            rows = self.rdb.execute(
+                """SELECT char_id, facts FROM events INDEXED BY events_talked
+                   WHERE npc_id = ? AND kind = 'talked_with' AND status = 'live'
+                   ORDER BY epoch DESC, seq DESC LIMIT ?""", (npc_id, int(tail))).fetchall() if ok else None
+            # Codex code R1 (A3-C1): never the world's whole deletion list - only the owners of the rows just examined
+            # (at most `tail` of them), by the tombstones primary key, in this same snapshot. A deletion that a restore
+            # rolled back (its event no longer live) does not count.
+            dead = set()
+            owners = sorted({r["char_id"] for r in rows}) if rows else []
+            for i in range(0, len(owners), 200):
+                part = owners[i:i + 200]
+                dead |= {r[0] for r in self.rdb.execute(
+                    "SELECT t.char_id FROM tombstones t JOIN events te ON te.event_id = t.event_id "
+                    f"WHERE te.status = 'live' AND t.char_id IN ({','.join('?' * len(part))})", part)}
+        finally:
+            self.rdb.execute("COMMIT")
+    if rows is None:
+        return None
+    out = {}
+    for r in rows:
+        if r["char_id"] in dead:
+            continue
+        try:
+            f = json.loads(r["facts"])
+            mpt, other, day = float(f["mpt"]), str(f["other_id"]), str(f["day"])
+        except (KeyError, TypeError, ValueError):
+            continue
+        age = float(now_mpt) - mpt
+        if age < 0 or age > float(fade_s):   # the clock's future (a restore mismatch), or faded
+            continue
+        e = out.get(other)
+        if e is None:
+            if len(out) >= int(queue):
+                continue                      # a ninth speaker: outside the queue
+            e = out[other] = {"days": set(), "last_day": day}
+        e["days"].add(day)
+        if day > e["last_day"]:
+            e["last_day"] = day
+    return {k: {"days": len(v["days"]), "last_day": v["last_day"]} for k, v in out.items()}
+
+
 Ledger.pair_rows = _pair_rows
+Ledger.acquaintances = _acquaintances
 Ledger.npc_rows = _npc_rows
 Ledger.legacy_marker = _legacy_marker
 Ledger.history = _history

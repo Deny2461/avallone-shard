@@ -537,9 +537,10 @@ public class ExchangeTests : IDisposable
     [Fact]
     public void ThePauseGrowsWithTheLineBeingAnsweredAndIsCapped()
     {
-        Assert.Equal(TimeSpan.FromSeconds(3), Exchange.PauseFor(null, 0));
-        Assert.Equal(TimeSpan.FromSeconds(4.5), Exchange.PauseFor("", 1));
-        Assert.Equal(TimeSpan.FromSeconds(5), Exchange.PauseFor(new string('a', 100), 0));
+        // numbers after the owner's A3 play test (2026-11-10): 2-3 s + 10 ms a character, cap 4.5 s
+        Assert.Equal(TimeSpan.FromSeconds(2), Exchange.PauseFor(null, 0));
+        Assert.Equal(TimeSpan.FromSeconds(3), Exchange.PauseFor("", 1));
+        Assert.Equal(TimeSpan.FromSeconds(3), Exchange.PauseFor(new string('a', 100), 0));
         Assert.Equal(Exchange.PauseCap, Exchange.PauseFor(new string('a', 400), 1));
         Assert.True(Exchange.PauseFor(new string('a', 100), 0.5) > Exchange.PauseFor(new string('a', 40), 0.5));
     }

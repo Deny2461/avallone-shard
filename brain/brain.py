@@ -44,6 +44,7 @@ import decency  # noqa: E402
 import dials  # noqa: E402  (5c-2 2b)
 import mood  # noqa: E402  (5c-2 2c)
 import variety  # noqa: E402  (Step B 2026-11-08: repeat catcher)
+import acquaint  # noqa: E402  (Stage A3 2026-11-10: who an NPC has traded lines with)
 import nature  # noqa: E402  (Step B 2026-11-08: a nature (personality) per ordinary NPC)
 import party  # noqa: E402  (Stage A1 2026-11-09: who travels with the player)
 import exchange  # noqa: E402  (Stage A2 2026-11-09: a spoken exchange between two AI characters, public only)
@@ -98,6 +99,8 @@ DEFAULTS = {
     "party_pet_share": 0.10,
     "exchange_budget_ms": 6000,
     "exchange_cancel_wait_ms": 2000,
+    # Stage A3: the brain-side stop for the acquaintance reader. False = every read answers "off"; rows are still stored.
+    "acquaintance": True,
     "exchange_max_tokens": 60,
     "rumour_pair_share": 0.35,    # "what news": two different people's stories, both name-free (Codex finding 1)
     "rumour_live_share": 0.25,   # the owner, chat, 2026-10-30:
@@ -1408,6 +1411,7 @@ class Handler(BaseHTTPRequestHandler):
         # name only as a {PETn} token, bound in at the end). Townsfolk and Mirabel only; a companion's own reply (v2) never
         # gets it. A problem costs the paragraph, never the reply.
         pty = None
+        acq_state = "off"
         if not v2 and isinstance(req.get("party"), dict):
             try:
                 names = [str(p.get("name") or "") for p in roster]
@@ -1416,7 +1420,17 @@ class Handler(BaseHTTPRequestHandler):
                 if pty:
                     party_turn = party.pick(pty, rumour_speech.RNG.random(), float(CFG["party_companion_share"]),
                                             float(CFG["party_pet_share"]))
-                    situation = (situation + "\n\n" + party.block(pty, party_turn)).strip()
+                    known = ""
+                    if party_turn == "companion" and pty["companions"]:
+                        # Stage A3: has this NPC traded lines with that companion before? Facts only; a miss, a switch
+                        # that is off or memory that is not reconciled all add nothing.
+                        tgt, who = party.target(pty)
+                        # Codex code R1 (A3-C2): remark() never raises - a failure here must not cost the A1 paragraph.
+                        ask_known = acquaint.parse_known({**pty["known"], "other_id": tgt.get("id")}) \
+                            if isinstance(pty.get("known"), dict) else None
+                        acq_state, known = acquaint.remark(LEDGER, npc, ask_known, who, cards.rules,
+                                                           CFG.get("acquaintance", True), cards.CENTRAL)
+                    situation = (situation + "\n\n" + party.block(pty, party_turn, known)).strip()
             except Exception as e:
                 pty = None
                 log(event="party", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
@@ -1602,7 +1616,7 @@ class Handler(BaseHTTPRequestHandler):
                 **({"tease_dropped": True} if tease_dropped else {}),
                 **({"mood": mood_log} if mood_log else {}),
                 **({"variety": variety_log} if variety_log else {}),
-                **({"party": dict(party.log_fields(pty, say), turn=party_turn)} if pty else {}),
+                **({"party": dict(party.log_fields(pty, say), turn=party_turn, acq=acq_state)} if pty else {}),
                 **({"rumour": {"ids": offer.ids, "told": told, "mode": offer.mode, "speaker": offer.is_speaker,
                                "sentinel_used": bool(offer.sentinel) and offer.sentinel in say,
                                "first_refusal": binding, "angle": offer.angle, "name_mode": "name" if offer.name else "sentinel"}}
@@ -1728,8 +1742,9 @@ class Handler(BaseHTTPRequestHandler):
         """Stage A2: one line of a spoken exchange between two AI characters (design v2 after Codex F1/F2/F5).
 
         Public only: the prompt is the house rules, the speaker's persona (+ an ordinary NPC's nature) and what was said
-        aloud - see exchange.py. This handler never reads or writes the ledger, memories, beliefs, secrets, dials, gossip,
-        lore or conversation history, and offers no actions. ONE model call, never retried: a refused, garbled, empty or
+        aloud - see exchange.py. This handler never writes the ledger and never reads memories, beliefs, secrets, dials,
+        gossip, lore or conversation history, and offers no actions. Stage A3: its ONE ledger read is the acquaintance
+        reader (acquaint.py) - whether these two have traded lines before, facts only - and only when the shard asks. ONE model call, never retried: a refused, garbled, empty or
         timed-out step answers ok=false and the shard ends the exchange. The call holds the one background slot, so any
         conversation request cuts it off at once (preempt_background)."""
         start = time.monotonic()
@@ -1772,7 +1787,12 @@ class Handler(BaseHTTPRequestHandler):
                 answer({"ok": False, "error": "exchange cancelled" if gone else "the model is taken"})
                 return
             began = True
-            system = SYSTEM_RULES + "\n\n" + persona["text"] + "\n\n" + exchange.rules(ask)
+            # Codex code R1 (A3-C2): remark() never raises and opens the rules file only when a read was asked for and
+            # the switch is on - with A3 off this handler depends on nothing A2 did not.
+            acq_state, known = acquaint.remark(LEDGER, npc, ask["known"], ask["addressee"]["first"], cards.rules,
+                                               CFG.get("acquaintance", True), cards.CENTRAL)
+            tag["acq"] = acq_state
+            system = SYSTEM_RULES + "\n\n" + persona["text"] + "\n\n" + exchange.rules(ask, known)
             budget_ms = min(int(req.get("budget_ms") or CFG["exchange_budget_ms"]), CFG["exchange_budget_ms"])
             say, stats = ollama_line(system, exchange.record(ask), max(0.5, (budget_ms - 250) / 1000),
                                      CFG["exchange_max_tokens"])
