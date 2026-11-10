@@ -76,7 +76,7 @@ toward NPCs who "do their own thing".
 | 5c-2 · 2c | **NPC mood** (one per NPC per day), an automatic shop hint, reflection v2 | ✅ |
 | 5c-2 · step B | A **nature** for every townsperson, a **conversation lock** (who you are talking to), a repeat catcher | ✅ |
 | 5c-2 · stage A1 | NPCs notice the companions and pets travelling with you, and now and then speak to or about them | ✅ |
-| 5c-2 · stage A2 | Your companion and an NPC trade a line or two (a shared two-speaker engine, later reused for villagers talking to each other) | 📐 |
+| 5c-2 · stage A2 | Your companion and an NPC trade a few lines (a shared two-speaker engine, later reused for villagers talking to each other) | ✅ |
 | 5c-2 · promise guard | A stronger guard that spots a claimed promise and rewrites a reply that gives in | ⏸️ |
 | 5c-2 · 2d | Rumours that drift, get corrected, and carry how sure the teller is | 📐 |
 | 5c-2 · 2e | Rumours on the same memory model, plus a town-wide reputation | 📐 |

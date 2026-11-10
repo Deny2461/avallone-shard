@@ -646,7 +646,7 @@ public abstract partial class BaseCompanion : BaseCreature
                     ? $"You are travelling with {name}, waiting where they asked you to. "
                     : $"You are travelling with {name}, following them. "
             );
-            sb.Append($"When {name} tells you to follow, to wait, or to go home, you do it, even if you grumble. ");
+            sb.Append($"When {name} tells you to follow, to wait, or to go home, you do it. ");
         }
         else if (ControlMaster != null)
         {
@@ -654,7 +654,11 @@ public abstract partial class BaseCompanion : BaseCreature
         }
         else if (CanJoin(from, out var why))
         {
-            sb.Append($"You are not travelling with anyone. If {name} asks you to travel with them, you agree, warily, telling them what you expect of them. ");
+            sb.Append(
+                CompanionTrust.Band(GetTrust(from)) is "trusting" or "devoted"
+                    ? $"You are not travelling with anyone. If {name} asks you to travel with them, you agree gladly. "
+                    : $"You are not travelling with anyone. If {name} asks you to travel with them, you agree, warily, telling them what you expect of them. "
+            );
         }
         else
         {

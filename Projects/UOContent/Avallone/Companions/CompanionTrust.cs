@@ -47,12 +47,14 @@ public static class CompanionTrust
         };
 
     // What the model is told. Plain behaviour, no numbers - numbers invite the model to recite them.
+    // the owner's A2 play test 2026-11-09: the two upper bands used to end - sent
+    // with every line, the model scolded in every line (trial: 24 replies each way). Trust now reads as warmth.
     public static string Describe(int trust, string name) =>
         Band(trust) switch
         {
             "wary"     => $"You do not trust {name} yet. You watch what they do, not what they say.",
             "warming"  => $"You are starting to like {name}, though you would not say so outright.",
-            "trusting" => $"You trust {name} and speak freely with them, though you still scold them when they are reckless.",
-            _          => $"You would follow {name} anywhere, and they know it. You still scold them."
+            "trusting" => $"You trust {name} and speak freely with them; you like their company and it shows.",
+            _          => $"You would follow {name} anywhere, and they know it: you are warm and easy with them, and glad of their company."
         };
 }

@@ -58,6 +58,19 @@ public sealed record StandingAsk(int Karma, int Fame, int Hour, string Moon, str
 // What the brain offered: the one sentinel (or empty), whose character id, the descriptor if they are gone, rumour ids.
 public sealed record RumourInfo(string Sentinel, string CharId, string Descriptor, string[] Ids, string Mode);
 
+// Stage A2: one step of a spoken exchange between two AI characters (Exchange.cs). Public facts only - who speaks, to
+// whom, and what was said aloud so far (oldest first; the newest line is always the addressee's). TrustBand: a companion
+// speaker's coarse band toward the player beside her (wary / warming / trusting / devoted), used in HER prompt only.
+// Roster: real player names, for the brain's reply check only (never put in a prompt).
+public sealed record ExchangeVoice(string Kind, string Name, string Title);
+
+public sealed record ExchangeLine(string Who, string Text);
+
+public sealed record ExchangeAsk(
+    string Id, int Step, ExchangeVoice Speaker, ExchangeVoice Addressee, string TrustBand, ExchangeLine[] Transcript, string[] Roster,
+    bool Last = false   // this step is the exchange's closing line (its length is drawn per exchange)
+);
+
 // One line of a conversation, oldest first. Speaker is "player" or "npc".
 public readonly record struct AiLine(string Speaker, string Text);
 
@@ -71,7 +84,8 @@ public sealed record AiRequest(
 {
     public Guid RequestId { get; } = Guid.NewGuid();
 
-    // "plan" = a wanderer choosing its next goal alone (brain /v1/npc/plan); null = conversation (/v1/npc/respond).
+    // "plan" = a wanderer choosing its next goal alone (brain /v1/npc/plan); "summarize" = a named NPC's visit notes;
+    // "exchange" = one step of an exchange between two AI characters (/v1/npc/exchange); null = conversation (/v1/npc/respond).
     public string Mode { get; init; }
 
     // Names a persona file in the sidecar (brain/personas/<key>.txt). When set, Persona may be null.
@@ -113,6 +127,9 @@ public sealed record AiRequest(
     // Stage A1 (2026-11-09): who travels with the player, as the NPC can see them (TravelParty.For); null = nobody.
     public TravelParty.PartyAsk Party { get; init; }
 
+    // Stage A2: set only on an exchange step (Mode "exchange"); everything private above stays unset on such a request.
+    public ExchangeAsk Exchange { get; init; }
+
     // One conversation lease per NPC + subject: a second request while one is pending is refused.
     public string LeaseKey => $"{NpcId:N}:{SubjectId:N}";
 }
@@ -133,6 +150,7 @@ public readonly record struct AiReply(AiOutcome Outcome, string Text, string Mod
     // 5c-2 2b (B4): "hateful_language" when the player's line tripped the narrow slur list (category only, no text).
     public string Conduct { get; init; }
     // Stage A1 (Codex A1-3): "decency" when the brain answered with a fixed decency line; null for an ordinary reply.
+    // Stage A2: "shop" when the brain added a how-to-trade line; "exchange" on an exchange step.
     public string Kind { get; init; }
 
     public static AiReply Success(string text, string model) => new(AiOutcome.Ok, text, model, 0, null);

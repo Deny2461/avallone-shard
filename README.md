@@ -46,6 +46,8 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
   strangers less.
 - **They notice who you travel with.** Townsfolk and the innkeeper can see your companion and your pets, and now
   and then speak to your companion or remark on your horse, by the name you gave it.
+- **Your companion answers for herself.** When a townsperson speaks to your companion by name, the two may trade a few
+  lines of their own: usually one to three, once in a while a longer chat. They stop as soon as you speak.
 - **A wandering sellsword lives his own life.** He travels, hunts, sells his loot, banks and rests, whether
   or not anyone is watching.
 

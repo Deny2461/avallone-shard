@@ -215,7 +215,11 @@ public static class NamedNpcs
     // Codex finding 5: one at a time, only when nothing else is queued or in flight, never near the quiet window.
     internal static bool MayDispatch(DateTime now) =>
         Enabled && !_inFlight && _queue.Count > 0 && AiGateway.Enabled && AiGateway.Client != null &&
-        AiGateway.IsIdle && !AiGateway.BreakerIsOpen && !AiGateway.InQuietWindowAt(now, HoldBeforeQuiet) && RateOk(now);
+        AiGateway.IsIdle && !AiGateway.BreakerIsOpen && !AiGateway.InQuietWindowAt(now, HoldBeforeQuiet) &&
+        !Exchange.Running && !Exchange.Settling && RateOk(now);   // Stage A2: one background model call at a time
+
+    // Stage A2: an exchange step never starts while a summary's model call is out.
+    public static bool SummaryRunning => _inFlight;
 
     private static bool RateOk(DateTime now)
     {

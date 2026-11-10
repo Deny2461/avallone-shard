@@ -46,10 +46,11 @@ public sealed class SidecarAiClient : IAiNpcClient
             request.Rumours,
             request.Named,
             request.Standing,
-            request.Party
+            request.Party,
+            request.Exchange
         );
 
-        using var response = await _http.PostAsJsonAsync(request.Mode switch { "plan" => "v1/npc/plan", "summarize" => "v1/npc/summarize", _ => "v1/npc/respond" }, body, _json, token).ConfigureAwait(false);
+        using var response = await _http.PostAsJsonAsync(request.Mode switch { "plan" => "v1/npc/plan", "summarize" => "v1/npc/summarize", "exchange" => "v1/npc/exchange", "exchange_cancel" => "v1/npc/exchange/cancel", _ => "v1/npc/respond" }, body, _json, token).ConfigureAwait(false);
         var reply = await response.Content.ReadFromJsonAsync<SidecarResponse>(_json, token).ConfigureAwait(false);
 
         if (!response.IsSuccessStatusCode || reply is not { Ok: true } || string.IsNullOrWhiteSpace(reply.Say))
@@ -88,7 +89,8 @@ public sealed class SidecarAiClient : IAiNpcClient
         RumourAsk Rumours,
         NamedAsk Named,
         StandingAsk Standing,
-        TravelParty.PartyAsk Party
+        TravelParty.PartyAsk Party,
+        ExchangeAsk Exchange
     );
 
     private sealed record SidecarResponse(

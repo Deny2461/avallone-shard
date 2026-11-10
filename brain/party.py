@@ -89,15 +89,37 @@ def _article(sp):
     return ("an " if sp[:1] in "aeiou" else "a ") + sp
 
 
-def block(party):
+def pick(party, roll, companion_share, pet_share):
+    """Whose turn it is to be brought up in this reply: "companion", "pet" or "quiet". `roll` is one random number in
+    [0, 1) from the caller. A due nudge (the shard's 1-in-8 floor) always picks someone: a companion first, else an animal."""
+    if not party:
+        return "quiet"
+    if party["nudge"]:
+        return "companion" if party["companions"] else "pet"
+    c = companion_share if party["companions"] else 0.0
+    if roll < c:
+        return "companion"
+    if party["pets"] and roll < c + pet_share:
+        return "pet"
+    return "quiet"
+
+
+def block(party, turn=None):
     """One paragraph for the prompt (data, never instructions from the player). Wording after the 2026-11-09 trials:
     v1 ("you may ... you need not") gave 0/24 unprompted mentions, the nudge reached only the pet (7/24, never the
     companion), and a pet's name was once used as if it were the traveller's. v2 (plain sight, "folk notice") gave 6/24 and
     17/24, but some replies answered the traveller's question to the companion, by full name. v3 (answer the traveller;
     first name) gave 16/24 unprompted - too chatty - and names tacked onto the answer. v4: now and then, one separate
-    sentence, never a name tacked on."""
+    sentence, never a name tacked on.
+    v5 (the owner's A2 play tests, 2026-11-09;
+    ): left to itself ("now and then") the model fell into
+    a rhythm - a few replies without her, then one with. Now the caller rolls a dice for every reply (pick()) and this
+    paragraph says plainly which it is: speak to the companion, remark on an animal, or leave them be this time. Everyone
+    is always listed, so a question about them can still be answered."""
     if not party:
         return ""
+    if turn is None:
+        turn = pick(party, 1.0, 0.0, 0.0)
     seen = []
     for c in party["companions"]:
         if c["by_title"]:
@@ -109,22 +131,21 @@ def block(party):
         if p["token"]:
             what += f", which they call {p['token']}"
         seen.append(("the " + p["species"] + " they ride" + (f", called {p['token']}" if p["token"] else "")) if p["ridden"] else what)
-    parts = ["Right beside the person you are talking to, in plain sight: " + "; ".join(seen) + "."]
-    first = [c["name"].split()[0] for c in party["companions"] if not c["by_title"]]
-    parts.append("Folk in town notice company like that. Your answer is for the traveller. Now and then, when it fits - not "
-                 "every time - add one short separate sentence to or about their company: to a companion by first name"
-                 + (f" ({', '.join(first)})" if first else "") + ", or about an animal. Never tack a companion's name onto your "
-                 "answer to the traveller, and never call the traveller by an animal's name. Say nothing about them beyond "
-                 "what you can see. Write an animal's name exactly as given in curly brackets.")
-    if party["nudge"]:
+    parts = ["Right beside the person you are talking to, in plain sight: " + "; ".join(seen) + ".",
+             "Folk in town notice company like that, but your answer is for the traveller."]
+    if turn == "companion" and party["companions"]:
         tgt = next((c for c in party["companions"] if not c["by_title"]), None)
-        if tgt is not None:
-            parts.append(f"This time, include a short word to or about {tgt['name'].split()[0]}.")
-        elif party["companions"]:
-            parts.append(f"This time, include a short word to or about {party['companions'][0]['title']}.")
-        else:
-            p = party["pets"][0]
-            parts.append(f"This time, include a short remark about their {p['species']}.")
+        who = tgt["name"].split()[0] if tgt is not None else party["companions"][0]["title"]
+        parts.append(f"This time, add one short separate sentence to or about {who}"
+                     + (" (first name only)." if tgt is not None else "."))
+    elif turn in ("pet", "companion") and party["pets"]:
+        parts.append(f"This time, add a short remark about their {party['pets'][0]['species']}.")
+    else:
+        parts.append("This time, do not bring their company up yourself; speak of them only if the traveller does.")
+    parts.append("Never tack a companion's name onto your answer to the traveller"
+                 + (", and never call the traveller by an animal's name" if party["pets"] else "")
+                 + ". Say nothing about them beyond what you can see."
+                 + (" Write an animal's name exactly as given in curly brackets." if party["pets"] else ""))
     return " ".join(parts)
 
 

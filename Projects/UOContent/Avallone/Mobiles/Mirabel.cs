@@ -196,6 +196,7 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
 
         Direction = GetDirectionTo(from);
 
+        var openingRevision = Server.Avallone.AI.Exchange.RevisionOf(from);   // Codex A2-R1: see TownsfolkTalk
         var reply = await AiGateway.RequestAsync(request);
 
         // Stale-reply protection: the player logged out, died, or walked off while she was thinking.
@@ -216,6 +217,8 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
             Direction = GetDirectionTo(from);
             Say(spoken);
             Server.Avallone.AI.TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency");
+            // Stage A2: if she spoke to the player's companion by name, the companion may answer (switch avallone.ai.exchanges).
+            Server.Avallone.AI.Exchange.AfterReply(this, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop", openingRevision);
             Remember(history, "player", text);
             Remember(history, "npc", Server.Avallone.AI.TravelParty.ForHistory(Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken), request.Party));
             Server.Avallone.Named.NamedNpcs.OnExchange(this, from, text); // the visitor's own words, for this visit's notes

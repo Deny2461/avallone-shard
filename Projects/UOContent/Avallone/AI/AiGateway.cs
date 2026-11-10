@@ -247,6 +247,16 @@ public static class AiGateway
             {
                 logger.Warning(ex, "Avallone AI gateway: background pre-emption failed");
             }
+
+            // Stage A2 (Codex Stage A design F2): a conversation always takes the model from a companion <-> NPC exchange.
+            try
+            {
+                Exchange.Preempt("a conversation needs the model");
+            }
+            catch (Exception ex)
+            {
+                logger.Warning(ex, "Avallone AI gateway: exchange pre-emption failed");
+            }
         }
 
         if (InQuietWindow)

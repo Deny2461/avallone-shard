@@ -46,6 +46,7 @@ import mood  # noqa: E402  (5c-2 2c)
 import variety  # noqa: E402  (Step B 2026-11-08: repeat catcher)
 import nature  # noqa: E402  (Step B 2026-11-08: a nature (personality) per ordinary NPC)
 import party  # noqa: E402  (Stage A1 2026-11-09: who travels with the player)
+import exchange  # noqa: E402  (Stage A2 2026-11-09: a spoken exchange between two AI characters, public only)
 
 CONFIG_PATH = os.environ.get("AVALLONE_BRAIN_CONFIG", "/etc/avallone-brain/config.json")
 
@@ -90,6 +91,14 @@ DEFAULTS = {
     "memory_cards": True,   # 5c-2 2a: structured memory (False = the 5c-1 recall exactly as before)
     "summary_max_tokens": 160,
     "summary_budget_ms": 6000,
+    # Stage A2: one step of a companion <-> NPC exchange. One attempt, no retries; cut off by any conversation.
+    # Stage A2 play tests: a dice roll per reply decides whether the NPC is told to speak to the companion, to remark on an
+    # animal, or to leave the player's company be this time (party.pick). A due nudge from the shard always picks someone.
+    "party_companion_share": 0.35,
+    "party_pet_share": 0.10,
+    "exchange_budget_ms": 6000,
+    "exchange_cancel_wait_ms": 2000,
+    "exchange_max_tokens": 60,
     "rumour_pair_share": 0.35,    # "what news": two different people's stories, both name-free (Codex finding 1)
     "rumour_live_share": 0.25,   # the owner, chat, 2026-10-30:
     "rumour_name_mode": "sentinel",
@@ -622,8 +631,19 @@ def ollama_chat(persona, utterance, timeout_s, history=(), nudge=None, knowledge
 # Codex 5c-1 code review finding 4: the visit summary's model call, kept so a conversation can cut it off at once.
 # Round 2 finding 3: "active" from the moment the summary handler starts, so a conversation that arrives before the
 # connection exists still cancels it.
-SUMMARY_CALL = {"conn": None, "active": False, "cancelled": False}
+# Stage A2 (2026-11-09): generalised to "the one running background call" - a visit summary or an exchange step. Only one
+# runs at a time (begin_background refuses a second), and a conversation cuts off whichever it is.
+SUMMARY_CALL = {"conn": None, "active": False, "cancelled": False, "kind": "", "exchange": ""}
 SUMMARY_LOCK = threading.Lock()
+# Codex "Avallone Stage A2 Code R1" finding A2-R2: cutting off the call that is running NOW is not enough - a background
+# request can arrive, or still be reading its persona, after the conversation looked. So, all under SUMMARY_LOCK:
+# - FOREGROUND counts conversation requests from their first moment to their last; no background call is admitted while
+#   it is above zero (and the same step that raises it cuts off whatever is running);
+# - CANCELLED_EXCHANGES remembers exchanges the shard has ended (/v1/npc/exchange/cancel), so a step of one that turns up
+#   late is refused before it can claim the model. Bounded; oldest forgotten first.
+FOREGROUND = {"n": 0}
+CANCELLED_EXCHANGES = {}
+CANCELLED_KEEP = 256
 
 
 class Preempted(Exception):
@@ -632,28 +652,83 @@ class Preempted(Exception):
 
 def begin_summary():
     with SUMMARY_LOCK:
-        SUMMARY_CALL.update(active=True, cancelled=False, conn=None)
+        SUMMARY_CALL.update(active=True, cancelled=False, conn=None, kind="summary", exchange="")
+
+
+def begin_background(kind, exchange_id=""):
+    """Claim the one background slot for a summary or an exchange step. False (and nothing changed) if one is running,
+    if a conversation is being answered right now, or if this exchange has been cancelled by the shard."""
+    with SUMMARY_LOCK:
+        if SUMMARY_CALL["active"] or FOREGROUND["n"] > 0 or (exchange_id and exchange_id in CANCELLED_EXCHANGES):
+            return False
+        SUMMARY_CALL.update(active=True, cancelled=False, conn=None, kind=kind, exchange=exchange_id or "")
+        return True
 
 
 def end_summary():
     with SUMMARY_LOCK:
-        SUMMARY_CALL.update(active=False, cancelled=False, conn=None)
+        SUMMARY_CALL.update(active=False, cancelled=False, conn=None, kind="", exchange="")
+
+
+end_background = end_summary
+
+
+def _cut_running_locked():
+    """SUMMARY_LOCK held. Cancel the running background call - before it connects, or by closing its socket."""
+    if not SUMMARY_CALL["active"]:
+        return ""
+    SUMMARY_CALL["cancelled"] = True
+    conn = SUMMARY_CALL["conn"]
+    if conn is not None and conn.sock is not None:
+        try:
+            conn.sock.shutdown(socket.SHUT_RDWR)
+        except OSError:
+            pass
+    return SUMMARY_CALL["kind"] or "summary"
+
+
+def preempt_background():
+    """A conversation arrived: cancel the running background call - before it connects, or by closing its socket.
+    Returns its kind ("summary" / "exchange"), or "" if none was running."""
+    with SUMMARY_LOCK:
+        return _cut_running_locked()
+
+
+def begin_foreground():
+    """A conversation request has arrived. In one step: it is counted (so no background call can be admitted until
+    end_foreground) and the running background call, if any, is cut off. Returns that call's kind, or ""."""
+    with SUMMARY_LOCK:
+        FOREGROUND["n"] += 1
+        return _cut_running_locked()
+
+
+def end_foreground():
+    with SUMMARY_LOCK:
+        FOREGROUND["n"] = max(0, FOREGROUND["n"] - 1)
+
+
+def cancel_exchange(exchange_id):
+    """The shard ended this exchange. Remember it (a late step is refused) and cut its step off if it is the one
+    running. True if it was running."""
+    with SUMMARY_LOCK:
+        CANCELLED_EXCHANGES.pop(exchange_id, None)
+        CANCELLED_EXCHANGES[exchange_id] = time.monotonic()
+        while len(CANCELLED_EXCHANGES) > CANCELLED_KEEP:
+            CANCELLED_EXCHANGES.pop(next(iter(CANCELLED_EXCHANGES)))
+        if SUMMARY_CALL["active"] and SUMMARY_CALL["kind"] == "exchange" and SUMMARY_CALL["exchange"] == exchange_id:
+            _cut_running_locked()
+            return True
+        return False
+
+
+def exchange_running(exchange_id):
+    with SUMMARY_LOCK:
+        return SUMMARY_CALL["active"] and SUMMARY_CALL["kind"] == "exchange" and SUMMARY_CALL["exchange"] == exchange_id
 
 
 def preempt_summary():
-    """A conversation arrived: cancel the running summary - before it connects, or by closing its socket. True if one
-    was running."""
-    with SUMMARY_LOCK:
-        if not SUMMARY_CALL["active"]:
-            return False
-        SUMMARY_CALL["cancelled"] = True
-        conn = SUMMARY_CALL["conn"]
-        if conn is not None and conn.sock is not None:
-            try:
-                conn.sock.shutdown(socket.SHUT_RDWR)
-            except OSError:
-                pass
-        return True
+    """True if a background call was running (and is now cancelled)."""
+    return bool(preempt_background())
 
 
 def _post_cancellable(url, payload, timeout_s):
@@ -717,6 +792,47 @@ def ollama_json(system, user, schema, timeout_s, max_tokens, cancellable=False, 
         if why is not None:
             why.update(reason="bad_json")
         return None
+
+
+def ollama_line(system, user, timeout_s, max_tokens):
+    """Stage A2: ONE cancellable chat call for an exchange step - a system message and one user message, nothing else.
+    Returns (line, stats); the line is "" when the model had nothing to add. Never retried."""
+    body = {
+        "model": CFG["model"],
+        "stream": False,
+        "keep_alive": CFG["keep_alive"],
+        "format": REPLY_SCHEMA,
+        "options": {"num_predict": max_tokens, "temperature": CFG["temperature"], **runner_options()},
+        "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}],
+    }
+    if CFG.get("think") is not None:
+        body["think"] = CFG["think"]
+    data = _post_cancellable(CFG["ollama_url"].rstrip("/") + "/api/chat", json.dumps(body).encode(), timeout_s)
+    if data.get("done") is False or data.get("done_reason") == "length":
+        raise GarbledReply("cut off at the token limit")
+    try:
+        parsed = json.loads(data.get("message", {}).get("content", ""))
+    except json.JSONDecodeError as e:   # position only - never the text
+        raise GarbledReply(f"JSONDecodeError: {e}") from None
+    if not isinstance(parsed, dict):
+        raise GarbledReply(f"reply is a JSON {type(parsed).__name__}, not an object")
+    ns = 1_000_000
+    return clean(parsed.get("say", ""), 240), {
+        "prompt_tokens": data.get("prompt_eval_count"), "reply_tokens": data.get("eval_count"),
+        "load_ms": (data.get("load_duration") or 0) // ns, "gen_ms": (data.get("eval_duration") or 0) // ns}
+
+
+def exchange_refused(say, ask):
+    """Why an exchange line may not be spoken, or None. The house rule, the frame, no leftover tokens, and NO real player
+    name at all (the strict check: the two speakers' own names were already refused if they are also a player's)."""
+    bad = decency.check(say)
+    if bad:
+        return f"decency:{bad}"
+    if breaks_frame(say, exchange.heard(ask)):
+        return "frame"
+    if "{" in say or "}" in say:
+        return "token"
+    return rumour_speech.check(say, rumour_speech.Offer(), [{"name": n} for n in ask["roster"]], RUMOUR_WORDS)
 
 
 def ollama_other_models(timeout_s=3):
@@ -880,6 +996,14 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(404, {"ok": False, "error": "not found"})
 
     def do_POST(self):
+        self._foreground = False
+        try:
+            self._do_post()
+        finally:
+            if self._foreground:   # Codex A2-R2: the conversation is answered; background work may be admitted again
+                end_foreground()
+
+    def _do_post(self):
         global LAST_PLAY
         if self.path in ("/v1/warm", "/v1/npc/respond"):
             LAST_PLAY = time.monotonic()
@@ -909,6 +1033,12 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/v1/npc/plan":
             self.handle_plan()
             return
+        if self.path == "/v1/npc/exchange":
+            self.handle_exchange()
+            return
+        if self.path == "/v1/npc/exchange/cancel":
+            self.handle_exchange_cancel()
+            return
         if self.path != "/v1/npc/respond":
             self.send_json(404, {"ok": False, "error": "not found"})
             return
@@ -922,8 +1052,12 @@ class Handler(BaseHTTPRequestHandler):
 
         rid = req.get("request_id")
         npc = req.get("npc_id")
-        if str(req.get("priority") or "") != "Background" and preempt_summary():
-            log(event="summary", op="preempted", request_id=rid)   # Codex 5c-1 finding 4: the conversation gets the model
+        cut_kind = ""
+        if str(req.get("priority") or "") != "Background":
+            self._foreground = True          # until do_POST's finally: no background call is admitted meanwhile
+            cut_kind = begin_foreground()
+        if cut_kind:   # Codex 5c-1 finding 4 (+ Stage A2: an exchange step too): the conversation gets the model
+            log(event=cut_kind, op="preempted", request_id=rid)
         budget_ms = min(int(req.get("budget_ms") or 4000), CFG["max_budget_ms"])
         utterance = str(req.get("utterance") or "")[:500]
         history = req.get("history") or []
@@ -1280,7 +1414,9 @@ class Handler(BaseHTTPRequestHandler):
                 names += [str(p.get("name") or "") for p in ((req.get("named") or {}).get("roster") or []) if isinstance(p, dict)]
                 pty = party.parse(req, names)
                 if pty:
-                    situation = (situation + "\n\n" + party.block(pty)).strip()
+                    party_turn = party.pick(pty, rumour_speech.RNG.random(), float(CFG["party_companion_share"]),
+                                            float(CFG["party_pet_share"]))
+                    situation = (situation + "\n\n" + party.block(pty, party_turn)).strip()
             except Exception as e:
                 pty = None
                 log(event="party", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
@@ -1466,7 +1602,7 @@ class Handler(BaseHTTPRequestHandler):
                 **({"tease_dropped": True} if tease_dropped else {}),
                 **({"mood": mood_log} if mood_log else {}),
                 **({"variety": variety_log} if variety_log else {}),
-                **({"party": party.log_fields(pty, say)} if pty else {}),
+                **({"party": dict(party.log_fields(pty, say), turn=party_turn)} if pty else {}),
                 **({"rumour": {"ids": offer.ids, "told": told, "mode": offer.mode, "speaker": offer.is_speaker,
                                "sentinel_used": bool(offer.sentinel) and offer.sentinel in say,
                                "first_refusal": binding, "angle": offer.angle, "name_mode": "name" if offer.name else "sentinel"}}
@@ -1474,6 +1610,8 @@ class Handler(BaseHTTPRequestHandler):
             out = {"ok": True, "say": say, "action": action, "model": CFG["model"]}
             if decency_line:
                 out["kind"] = "decency"   # Stage A1 (Codex A1-3 + fixes review): the fixed decency line WAS delivered
+            elif hint_note == "added":
+                out["kind"] = "shop"      # Stage A2: the reply ends with how to trade - the shard starts no exchange on it
             if mem_cards:   # 5c-2 2a: the shard records these (ids only) once the reply is really delivered
                 out["memory_cards"] = mem_cards
             if offer:   # Codex finding 2: always flag live-gossip context; ids = only what was really told
@@ -1538,6 +1676,7 @@ class Handler(BaseHTTPRequestHandler):
         shard records them. Never in the quiet window; a bad or unsafe answer stores nothing."""
         start = time.monotonic()
         rid = npc = None
+        began = False
         try:
             req = json.loads(self.read_body())
             rid, npc = req.get("request_id"), req.get("npc_id")
@@ -1546,7 +1685,11 @@ class Handler(BaseHTTPRequestHandler):
                 log(event="summary", request_id=rid, npc=npc, outcome="quiet_window", ms=0)
                 self.send_json(200, {"ok": False, "error": "quiet window"})
                 return
-            begin_summary()   # round 2 finding 3: cancellable from here on
+            if not begin_background("summary"):   # Stage A2: one background call at a time (the shard holds off too)
+                log(event="summary", request_id=rid, npc=npc, outcome="busy", ms=0)
+                self.send_json(200, {"ok": False, "error": "background call running"})
+                return
+            began = True   # round 2 finding 3: cancellable from here on
             lines = named.transcript(req.get("history"))
             roster = [p for p in (ask.get("roster") or []) if isinstance(p, dict)][:500]
             speaker = str(ask.get("speaker") or "")[:40]
@@ -1573,12 +1716,112 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(200, {"ok": False, "error": f"unusable: {e}"})
         except Exception as e:
             ms = int((time.monotonic() - start) * 1000)
-            cut = isinstance(e, Preempted) or SUMMARY_CALL["cancelled"]
+            cut = began and (isinstance(e, Preempted) or SUMMARY_CALL["cancelled"])
             log(event="summary", request_id=rid, npc=npc, outcome="preempted" if cut else "error", ms=ms,
                 error=f"{type(e).__name__}: {e}")
             self.send_json(200, {"ok": False, "error": f"{type(e).__name__}: {e}"})
         finally:
-            end_summary()
+            if began:
+                end_summary()
+
+    def handle_exchange(self):
+        """Stage A2: one line of a spoken exchange between two AI characters (design v2 after Codex F1/F2/F5).
+
+        Public only: the prompt is the house rules, the speaker's persona (+ an ordinary NPC's nature) and what was said
+        aloud - see exchange.py. This handler never reads or writes the ledger, memories, beliefs, secrets, dials, gossip,
+        lore or conversation history, and offers no actions. ONE model call, never retried: a refused, garbled, empty or
+        timed-out step answers ok=false and the shard ends the exchange. The call holds the one background slot, so any
+        conversation request cuts it off at once (preempt_background)."""
+        start = time.monotonic()
+        rid = npc = None
+        began = False
+        tag = {}
+
+        def answer(obj):
+            nonlocal began
+            if began:   # free the one background slot BEFORE the shard hears back, so its next step never finds it taken
+                end_background()
+                began = False
+            try:
+                self.send_json(200, obj)
+            except OSError:   # the shard already hung up (the player spoke): nothing to tell it
+                pass
+
+        def done(outcome, **more):
+            log(event="exchange", request_id=rid, npc=npc, outcome=outcome, ms=int((time.monotonic() - start) * 1000),
+                **tag, **more)
+
+        try:
+            req = json.loads(self.read_body())
+            rid, npc = req.get("request_id"), req.get("npc_id")
+            if in_quiet_window():
+                done("quiet_window")
+                answer({"ok": False, "error": "quiet window"})
+                return
+            ask = exchange.parse(req, RUMOUR_WORDS)
+            tag = {"exchange": ask["id"], "step": ask["step"], "speaker": ask["speaker"]["kind"]}
+            persona = load_persona(req.get("persona_key"))
+            if req.get("persona_vars"):
+                persona = apply_vars(persona, req["persona_vars"])
+                nat_block = nature.prompt_block(nature.of(npc))
+                if nat_block:
+                    persona = dict(persona, text=persona["text"] + "\n" + nat_block)
+            if REFLECTING or not begin_background("exchange", ask["id"]):
+                gone = ask["id"] in CANCELLED_EXCHANGES
+                done("cancelled" if gone else "busy")
+                answer({"ok": False, "error": "exchange cancelled" if gone else "the model is taken"})
+                return
+            began = True
+            system = SYSTEM_RULES + "\n\n" + persona["text"] + "\n\n" + exchange.rules(ask)
+            budget_ms = min(int(req.get("budget_ms") or CFG["exchange_budget_ms"]), CFG["exchange_budget_ms"])
+            say, stats = ollama_line(system, exchange.record(ask), max(0.5, (budget_ms - 250) / 1000),
+                                     CFG["exchange_max_tokens"])
+            if not say:
+                done("nothing", **stats)
+                answer({"ok": False, "error": "nothing to add"})
+                return
+            why = exchange_refused(say, ask)
+            if why:   # refused text is never logged - a fingerprint + the reason
+                done("refused", why=why, say_sha=decency.fingerprint(say), **stats)
+                answer({"ok": False, "error": f"refused ({why})"})
+                return
+            done("ok", model=CFG["model"], say=say, **stats)
+            answer({"ok": True, "say": say, "action": "none", "model": CFG["model"], "kind": "exchange"})
+        except exchange.Refused as e:
+            done("rejected", reason=str(e))
+            answer({"ok": False, "error": f"rejected: {e}"})
+        except Exception as e:
+            cut = began and (isinstance(e, Preempted) or SUMMARY_CALL["cancelled"])
+            done("preempted" if cut else "error", error=f"{type(e).__name__}: {e}")
+            answer({"ok": False, "error": f"{type(e).__name__}: {e}"})
+        finally:
+            if began:
+                end_background()
+
+    def handle_exchange_cancel(self):
+        """Codex A2-R2: the shard ended an exchange while one of its steps was out (the player spoke, gave an order...).
+        That exchange is remembered as over - a step still on its way is refused - and its running step is cut off.
+        Answers once the step has let go of the model (or after exchange_cancel_wait_ms), so the shard knows when the
+        model is really free. Never calls the model, never reads or writes memory."""
+        start = time.monotonic()
+        try:
+            xid = str(((json.loads(self.read_body() or b"{}").get("exchange") or {}).get("id")) or "")[:40]
+            if not exchange._ID.match(xid):
+                self.send_json(200, {"ok": False, "error": "rejected: id"})
+                return
+            was_running = cancel_exchange(xid)
+            until = start + CFG["exchange_cancel_wait_ms"] / 1000
+            while exchange_running(xid) and time.monotonic() < until:
+                time.sleep(0.02)
+            freed = not exchange_running(xid)
+            log(event="exchange", op="cancel", exchange=xid, was_running=was_running, freed=freed,
+                ms=int((time.monotonic() - start) * 1000))
+            self.send_json(200, {"ok": True, "say": "", "was_running": was_running, "freed": freed})
+        except Exception as e:
+            try:
+                self.send_json(200, {"ok": False, "error": f"{type(e).__name__}: {e}"})
+            except OSError:
+                pass
 
     def handle_lore_query(self):
         """What would this NPC know about these words? For [ai lore and tests; never calls the model."""

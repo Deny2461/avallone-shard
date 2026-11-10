@@ -218,8 +218,25 @@ what anyone standing there could see: never a companion's trust, secrets or memo
   so it never comes back to the model on a later turn.
 - **Names that could be confused with a real player** (a companion called Elspeth Vale next to a player called Elspeth Gray, a
   pet named like a player) are left out: the companion is called by their title, the pet by its species.
-- **How often.** The NPC mentions your company now and then, when it fits. If about seven replies in a row have ignored them,
-  the next one is nudged to say something. The shard counts only replies that were really spoken.
+- **How often.** Code decides, not the model. For every reply the brain rolls a dice: about one reply in three speaks to
+  your companion, about one in ten remarks on an animal, and the rest leave them be. The prompt then says plainly which it
+  is this time. (Asking the model to do it "now and then" produced a visible rhythm: a few replies without, then one with.)
+  If about seven replies in a row have ignored them, the next one is nudged to say something. The shard counts only replies
+  that were really spoken.
+
+### When your companion answers
+
+When a townsperson or the innkeeper has just spoken to your companion by name, the shard may let the two trade lines.
+
+- **One at a time, and short.** Only one such exchange runs on the whole shard at once. Its length is drawn when it starts:
+  one to three lines seven times in ten, four to six two times in ten, seven to ten one time in ten. Each line waits a few
+  seconds, longer after a long line, so it reads like talk.
+- **You always come first.** The moment a player nearby speaks, the exchange ends. Its model call is cancelled at the brain,
+  and no new exchange line is started while a player's conversation is waiting for the model.
+- **Talk only.** Nothing changes hands and nothing is stored: an exchange does not touch trust, memory or rumours. A line
+  that fails any of the usual reply checks, or comes back late, is simply not said, and the exchange ends there.
+- **It cannot run away.** After an exchange the NPC rests for a few minutes, and a couple of ordinary replies must pass
+  before the next one. A game master can switch exchanges off in game without a restart.
 
 ## 6. Memory
 

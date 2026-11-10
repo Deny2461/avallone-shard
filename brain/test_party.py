@@ -70,11 +70,14 @@ class Parse(unittest.TestCase):
         self.assertIsNone(party.parse(req(pets=[{"species": "a h0rse!!"}])))   # bad species and nothing else -> None
 
     def test_nudge_line(self):
-        self.assertIn("This time, include a short word to or about Elspeth.", party.block(party.parse(req([ELSPETH], nudge=True))))
-        self.assertNotIn("This time", party.block(party.parse(req([ELSPETH]))))
+        self.assertIn("This time, add one short separate sentence to or about Elspeth (first name only).",
+                      party.block(party.parse(req([ELSPETH], nudge=True))))
+        self.assertNotIn("This time, add", party.block(party.parse(req([ELSPETH]))))
+        self.assertIn("This time, do not bring their company up yourself", party.block(party.parse(req([ELSPETH]))))
         # the nudge names the companion first; a pet only when there is no companion; a clashing companion by title
         self.assertIn("a short remark about their horse", party.block(party.parse(req(pets=[{"species": "a horse"}], nudge=True))))
         self.assertIn("about the field healer", party.block(party.parse(req([ELSPETH], nudge=True), roster_names=["Elspeth Gray"])))
+        self.assertNotIn("first name", party.block(party.parse(req([ELSPETH], nudge=True), roster_names=["Elspeth Gray"])))
 
     def test_no_party(self):
         self.assertIsNone(party.parse({}))
@@ -103,12 +106,59 @@ class Bind(unittest.TestCase):
         self.assertFalse(party.mentioned("Bread is two coppers.", self.p))
 
 
+class Turns(unittest.TestCase):
+    """the owner's A2 play tests (2026-11-09): a dice roll per reply decides who, if anyone, the NPC brings up."""
+    def setUp(self):
+        self.both = party.parse(req([ELSPETH], [{"species": "a horse", "label": "Pip"}]))
+        self.pet = party.parse(req(pets=[{"species": "a horse"}]))
+
+    def test_pick_by_roll(self):
+        self.assertEqual(party.pick(self.both, 0.0, 0.35, 0.10), "companion")
+        self.assertEqual(party.pick(self.both, 0.349, 0.35, 0.10), "companion")
+        self.assertEqual(party.pick(self.both, 0.35, 0.35, 0.10), "pet")
+        self.assertEqual(party.pick(self.both, 0.449, 0.35, 0.10), "pet")
+        self.assertEqual(party.pick(self.both, 0.45, 0.35, 0.10), "quiet")
+        self.assertEqual(party.pick(self.both, 0.999, 0.35, 0.10), "quiet")
+        self.assertEqual(party.pick(self.pet, 0.05, 0.35, 0.10), "pet")       # no companion: her share is not the animal's
+        self.assertEqual(party.pick(self.pet, 0.10, 0.35, 0.10), "quiet")
+        self.assertEqual(party.pick(party.parse(req([ELSPETH])), 0.40, 0.35, 0.10), "quiet")   # no animal to remark on
+
+    def test_a_due_nudge_always_picks_someone(self):
+        self.assertEqual(party.pick(party.parse(req([ELSPETH], [{"species": "a horse"}], nudge=True)), 0.999, 0.0, 0.0), "companion")
+        self.assertEqual(party.pick(party.parse(req(pets=[{"species": "a horse"}], nudge=True)), 0.999, 0.0, 0.0), "pet")
+
+    def test_the_rolls_are_not_a_rhythm(self):
+        import random
+        rng = random.Random(7)
+        turns = [party.pick(self.both, rng.random(), 0.35, 0.10) for _ in range(4000)]
+        self.assertAlmostEqual(turns.count("companion") / 4000, 0.35, delta=0.03)
+        self.assertAlmostEqual(turns.count("pet") / 4000, 0.10, delta=0.02)
+        after_three_quiet = [turns[i + 3] for i in range(len(turns) - 3) if "companion" not in turns[i:i + 3]]
+        self.assertAlmostEqual(after_three_quiet.count("companion") / len(after_three_quiet), 0.35, delta=0.04)   # no build-up
+
+    def test_each_turn_says_one_thing(self):
+        c, pt, q = (party.block(self.both, t) for t in ("companion", "pet", "quiet"))
+        self.assertIn("to or about Elspeth", c)
+        self.assertNotIn("remark about their horse", c)
+        self.assertIn("This time, add a short remark about their horse.", pt)
+        self.assertNotIn("to or about Elspeth", pt)
+        self.assertIn("do not bring their company up yourself", q)
+        for b in (c, pt, q):                                    # everyone is always in view; the pet's name never is
+            self.assertIn("Elspeth Vale, the field healer", b)
+            self.assertIn("their horse, which they call {PET1}", b)
+            self.assertNotIn("Pip", b)
+            self.assertEqual(b.count("This time"), 1)
+
+
 class Handler(unittest.TestCase):
     """The real request path with a faked model: the prompt gets the paragraph (never the pet name), the reply gets the name."""
     def setUp(self):
         self.srv = ThreadingHTTPServer(("127.0.0.1", 0), brain.Handler)
         threading.Thread(target=self.srv.serve_forever, daemon=True).start()
         self.sent, self.logs = [], []
+        share = mock.patch.dict(brain.CFG, {"party_companion_share": 1.0, "party_pet_share": 0.0})   # default here: her turn
+        share.start()
+        self.addCleanup(share.stop)
 
     def tearDown(self):
         self.srv.shutdown()
@@ -148,6 +198,35 @@ class Handler(unittest.TestCase):
         rec = next(x for x in self.logs if x.get("event") == "respond")
         self.assertEqual(rec["party"]["companions"], 1)
         self.assertTrue(rec["party"]["mentioned"])
+
+    def turn_logged(self):
+        return next(x for x in self.logs if x.get("event") == "respond")["party"]["turn"]
+
+    def test_quiet_turn_is_told_to_leave_them_be(self):
+        with mock.patch.dict(brain.CFG, {"party_companion_share": 0.0, "party_pet_share": 0.0}):
+            out = self.ask(req([ELSPETH], [{"species": "a horse", "label": "Pip"}]), "Good day to you.")
+        self.assertTrue(out["ok"])
+        self.assertIn("do not bring their company up yourself", self.prompt())
+        self.assertNotIn("This time, add", self.prompt())
+        self.assertNotIn("Pip", self.prompt())
+        self.assertEqual(self.turn_logged(), "quiet")
+
+    def test_pet_turn(self):
+        with mock.patch.dict(brain.CFG, {"party_companion_share": 0.0, "party_pet_share": 1.0}):
+            self.ask(req([ELSPETH], [{"species": "a horse", "label": "Pip"}]), "A fine horse.")
+        self.assertIn("This time, add a short remark about their horse.", self.prompt())
+        self.assertEqual(self.turn_logged(), "pet")
+
+    def test_companion_turn_is_the_default_in_these_tests(self):       # control
+        self.ask(req([ELSPETH], [{"species": "a horse", "label": "Pip"}]), "Hello, Elspeth.")
+        self.assertIn("to or about Elspeth", self.prompt())
+        self.assertEqual(self.turn_logged(), "companion")
+
+    def test_a_due_nudge_beats_the_dice(self):
+        with mock.patch.dict(brain.CFG, {"party_companion_share": 0.0, "party_pet_share": 0.0}):
+            self.ask(req(pets=[{"species": "a horse"}], nudge=True), "A fine horse.")
+        self.assertIn("a short remark about their horse", self.prompt())
+        self.assertEqual(self.turn_logged(), "pet")
 
     def test_no_party_no_paragraph(self):                       # control
         self.ask({}, "Good day to you.")

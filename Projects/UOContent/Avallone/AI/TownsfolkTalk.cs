@@ -547,6 +547,9 @@ public static class TownsfolkTalk
 
         npc.Direction = npc.GetDirectionTo(from);
 
+        // Codex A2-R1: the player's speech count at THIS turn. If they say anything else before the reply is delivered,
+        // that reply may still be said but can no longer start an exchange.
+        var openingRevision = Exchange.RevisionOf(from);
         var reply = await AiGateway.RequestAsync(request);
 
         if (npc.Deleted || !npc.Alive || from.Deleted || from.NetState == null || from.Map != npc.Map ||
@@ -570,6 +573,8 @@ public static class TownsfolkTalk
         npc.Direction = npc.GetDirectionTo(from);
         npc.Say(spoken);
         TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency"); // A1 floor
+        // Stage A2: if this line spoke to the player's companion by name, she may answer (switch avallone.ai.exchanges).
+        Exchange.AfterReply(npc, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop", openingRevision);
         Relations.Visited(npc, from); // 5c-2 2b: familiarity + the day's warmth, only once a reply was really said
         Relations.Conduct(npc, from, reply);
         talk.Last = Core.Now;
