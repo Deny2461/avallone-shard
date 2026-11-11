@@ -61,8 +61,53 @@ public sealed class SidecarAiClient : IAiNpcClient
         return AiReply.Success(reply.Say.Trim(), reply.Model) with
         {
             Action = reply.Action ?? "none", Rumour = reply.Rumour, MemoryCards = reply.MemoryCards, Conduct = reply.Conduct,
-            Kind = reply.Kind
+            Kind = reply.Kind, Topics = CleanTopics(reply.Topics)
         };
+    }
+
+    // Stage A3 step 2 (Codex design R2): auxiliary metadata. Anything that is not a list is "not offered" (null); inside
+    // a list only short lowercase ids are kept, without duplicates, at most two. Never throws, never loses `say`.
+    internal static string[] CleanTopics(JsonElement? raw)
+    {
+        if (raw is not { ValueKind: JsonValueKind.Array } list)
+        {
+            return null;
+        }
+
+        var kept = new System.Collections.Generic.List<string>(2);
+        foreach (var x in list.EnumerateArray())
+        {
+            if (kept.Count >= 2)
+            {
+                break;
+            }
+
+            if (x.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var id = x.GetString();
+            if (id is { Length: >= 1 and <= 16 } && !kept.Contains(id) && IsId(id))
+            {
+                kept.Add(id);
+            }
+        }
+
+        return kept.ToArray();
+    }
+
+    private static bool IsId(string s)
+    {
+        foreach (var ch in s)
+        {
+            if (ch is < 'a' or > 'z')
+            {
+                return false;
+            }
+        }
+
+        return true;
     }
 
     public async Task WarmAsync(CancellationToken token)
@@ -95,6 +140,6 @@ public sealed class SidecarAiClient : IAiNpcClient
 
     private sealed record SidecarResponse(
         bool Ok, string Say, string Action, string Model, string Error, RumourInfo Rumour, string[] MemoryCards, string Conduct,
-        string Kind
+        string Kind, JsonElement? Topics = null
     );
 }

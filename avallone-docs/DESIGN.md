@@ -234,10 +234,18 @@ When a townsperson or the innkeeper has just spoken to your companion by name, t
   short answer.
 - **You always come first.** The moment you speak, or another conversation needs the model, the exchange ends. Its model
   call is cancelled at the brain, and no new exchange line is started while a player's conversation is waiting for the model.
-- **Talk only.** Nothing changes hands and nothing is stored: an exchange does not touch trust, memory or rumours. A line
-  that fails any of the usual reply checks, or comes back late, is simply not said, and the exchange ends there.
-- **It cannot run away.** After an exchange the NPC rests for a few minutes, and a couple of ordinary replies must pass
-  before the next one. A game master can switch exchanges off in game without a restart.
+- **Talk only.** Nothing changes hands, and none of the words are kept: an exchange does not touch trust or rumours. The
+  one thing recorded is that the two talked, and about which broad subjects (next section). A line that fails any of the
+  usual reply checks, or comes back late, is simply not said, and the exchange ends there.
+- **It stays on the thread.** A speaker's first line may be nudged toward a fresh everyday subject (next section). Every
+  line after that is told to stay on what the two are already saying and to make plain sense as a reply. Offering new
+  subjects on every line pulled replies away from what had just been said.
+- **It cannot run away.** After an exchange the NPC rests for a few minutes, and a set number of ordinary replies must
+  pass before the next one. A game master can switch exchanges off in game without a restart.
+- **No word to someone who cannot answer.** When the shard already knows an exchange cannot start (that rest, that count,
+  or another exchange running), it says so in the request, and the NPC speaks about your companion to you, not to her. A
+  greeting to her would hang unanswered. A reply that tells a rumour never starts an exchange either; that is only known
+  once the reply exists, so there an NPC can still remark on her and get no answer.
 
 ### Who has talked with whom
 
@@ -256,6 +264,33 @@ with, on which day, and how many lines. The fact holds an id, never a name, and 
 - **Restore-safe and deletable.** The facts live in the same ledger as every other memory, so a restored world forgets chats
   that never happened in it, and deleting a character hides the facts recorded in that character's company.
 - **Optional by construction.** If the reader fails for any reason, the sentence is left out and the conversation goes on.
+
+### What they talked about
+
+The same fact can carry up to two broad subjects, as ids from a fixed list of fifteen (road, weather, trade, food,
+healing, work, animals, sea, town, family, rest, clothes, danger, magic, land). Never a word that was said.
+
+- **Worked out by code, from the exchange only.** The brain matches the exchange lines against a small keyword list. The
+  NPC's opening line, which answered the player, is never read. The shard keeps the subjects of a line only once that line
+  has really been spoken.
+- **Steer, don't name.** Telling the model which subjects the two had covered made them talk about those subjects more,
+  not less (in a trial, road-and-weather lines went from 24 of 48 to 28). So covered subjects are never named. The prompt
+  offers up to two everyday subjects the pair has not covered, in place of the old fixed list. Road, weather, danger,
+  magic, sea and work are remembered but never offered. This reduces repetition; it does not promise a new subject every
+  time, and once everything has been covered subjects come round again.
+- **The list of ids is permanent; the keywords are tunable.** Ids are only ever added, so a stored fact never becomes
+  invalid. The keyword file can change freely, because stored facts hold ids and nothing reads the file when a fact arrives.
+- **Old and new versions mix safely.** The brain always accepts the subject list and cleans it (unknown ids dropped), and
+  never refuses a fact over it. The shard sends subjects only to a brain that has said it understands them and holds them
+  back otherwise. If a brain that does not understand them refuses such a fact, the shard keeps it for a brain that does.
+
+### One weather a day
+
+Every NPC used to make up its own weather, so three people in one town could disagree. Now a fixed calculation on the
+real-world date picks one description for the day (dry and clear, overcast, windy, light rain and so on, each with how
+warm it is). Nothing is stored and no model is asked. The prompt gives it as a fact to stay consistent with and tells the
+NPC not to bring the weather up. It does not follow the rain and snow the game client shows, and a companion's own
+replies to her owner do not get it yet.
 
 ## 6. Memory
 

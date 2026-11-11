@@ -29,7 +29,11 @@ public static class TravelParty
     // name-clash rules hold on every request, not only when gossip came along (Codex A1-2).
     public sealed record PartyAsk(
         PartyCompanion[] Companions, PartyPet[] Pets, bool Nudge, string[] Roster = null,
-        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KnownAsk Known = null
+        [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KnownAsk Known = null,
+        // Step 2 play test 2: true when the shard already knows no exchange can follow this reply, so the brain has the
+        // NPC speak ABOUT the companion and not TO her (a greeting to her would hang unanswered). Left out when false,
+        // so the request is unchanged whenever an exchange could start or exchanges are off.
+        [property: JsonPropertyName("no_answer"), JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] bool? NoAnswer = null
     );
 
     private static readonly Dictionary<Serial, int> _misses = new();
@@ -81,7 +85,10 @@ public static class TravelParty
             return null;
         }
 
-        return new PartyAsk(companions.ToArray(), pets.ToArray(), NudgeDue(player), RosterNames(), companions.Count > 0 ? known : null);
+        return new PartyAsk(
+            companions.ToArray(), pets.ToArray(), NudgeDue(player), RosterNames(), companions.Count > 0 ? known : null,
+            companions.Count > 0 && Exchange.CannotAnswerNow(npc, player) ? true : null
+        );
     }
 
     private static string[] RosterNames()

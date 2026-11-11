@@ -125,9 +125,21 @@ def _called(p):
     return p["name"] + (f", {p['title']}" if p["title"] else "")
 
 
-def rules(ask, known=""):
+# the owner's play test 2 (2026-11-10): - e.g. the baker says her arms will ache
+# from kneading and the companion answers "A tired cook makes for a heavy stomach, and I've no desire to wake up feeling
+# bloated". Two causes seen in the prompts: a fresh pair of subjects was offered on EVERY line, pulling each reply off
+# the thread, and nothing asked for plain sense. With `follow` on: subjects are offered only for each speaker's first
+# line (steps 0 and 1); after that the line stays on what the two are already saying.
+FOLLOW = ("Your line must make plain sense as a reply to those last words, to anyone listening: say it straight - no "
+          "proverbs, riddles or clever sayings, and no jump to a new subject. ")
+ON_THREAD = "what the two of you are already talking about"
+
+
+def rules(ask, known="", fresh=(), weather="", follow=False):
     """The paragraph added after the speaker's persona. Public facts only. `known` (Stage A3): one sentence saying the two
-    have chatted before, built by acquaint.sentence from ledger facts - never from anything that was said."""
+    have chatted before, built by acquaint.sentence from ledger facts - never from anything that was said. `fresh`
+    (step 2): up to two everyday subjects the two have not covered (code-chosen labels from topics.json); with none the
+    paragraph is Stage A2's, byte for byte."""
     me, other = ask["speaker"], ask["addressee"]
     if me["kind"] == "companion":
         parts = ["Right now you stand beside the traveller you journey with." + (" " + BANDS[ask["band"]] if ask["band"] else ""),
@@ -142,11 +154,15 @@ def rules(ask, known=""):
                  f"{other['first']} now - not with the traveller, who only stands by and listens."]
     if known:
         parts.append(known)
+    if weather:   # one weather for the day, the same for every NPC (weather.py); "" = Stage A2's paragraph
+        parts.append(weather)
     parts.append(
         f"This is a passing word between you and {other['first']}: answer what was just said to you in one short sentence, "
-        "two at most, in your own manner. Talk only: you cannot fetch, serve, sell, give or mend anything during this, so do "
-        "not offer to; promise and arrange nothing, and make no plans for the traveller. Keep to what anyone standing here could see and to everyday things - the road, the weather, your "
-        "work. Say nothing of the traveller's affairs, tell no news or gossip, and do not repeat what was already said.")
+        "two at most, in your own manner. " + (FOLLOW if follow else "") + "Talk only: you cannot fetch, serve, sell, give or mend anything during this, so do "
+        "not offer to; promise and arrange nothing, and make no plans for the traveller. Keep to what anyone standing here could see and to everyday things - "
+        + (ON_THREAD if follow and ask["step"] >= 2 else
+           f"your work, {', '.join(fresh)}" if fresh else "the road, the weather, your work")
+        + ". Say nothing of the traveller's affairs, tell no news or gossip, and do not repeat what was already said.")
     if ask["last"]:
         parts.append("This is your last word here: close it naturally, and ask nothing.")
     parts.append('If there is truly nothing natural to add, reply {"say": ""}.')

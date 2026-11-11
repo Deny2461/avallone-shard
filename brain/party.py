@@ -85,7 +85,11 @@ def parse(req, roster_names=()):
         pets.append({"species": sp, "label": label if ok else "", "token": tok, "ridden": bool(p.get("ridden"))})
     if not comps and not pets:
         return None
-    return {"companions": comps, "pets": pets, "nudge": raw.get("nudge") is True, "known": raw.get("known")}
+    # no_answer (play test 2): the shard knows an exchange will NOT follow this reply (its pacing rule, a rest, another
+    # exchange running). Then the aside is ABOUT the companion - a greeting TO her would hang unanswered (the owner, in game, to
+    # an NPC who had just greeted Elspeth: "I don't think she hear you"). Absent (older shard) = as before.
+    return {"companions": comps, "pets": pets, "nudge": raw.get("nudge") is True, "known": raw.get("known"),
+            "no_answer": raw.get("no_answer") is True}
 
 
 def _article(sp):
@@ -117,7 +121,14 @@ def target(party):
     return party["companions"][0], party["companions"][0]["title"]
 
 
-def block(party, turn=None, known=""):
+# the owner's step 2 play test (2026-11-10): the aside to the companion was the same remark every time -
+# (4 of 9 asides) - and she then answered about the road. Code now picks what the aside is.
+ANGLES = ("a plain, friendly greeting", "a remark on their trade or calling", "a friendly question about how their day goes",
+          "a word of welcome to this place", "a light remark on their manner or mood", "a small courtesy, as to any guest")
+NOT_THE_ROAD = "Not about how far they have travelled or how tired they look - every stranger says that."
+
+
+def block(party, turn=None, known="", angle=""):
     """One paragraph for the prompt (data, never instructions from the player). Wording after the 2026-11-09 trials:
     v1 ("you may ... you need not") gave 0/24 unprompted mentions, the nudge reached only the pet (7/24, never the
     companion), and a pet's name was once used as if it were the traveller's. v2 (plain sight, "folk notice") gave 6/24 and
@@ -148,8 +159,17 @@ def block(party, turn=None, known=""):
              "Folk in town notice company like that, but your answer is for the traveller."]
     if turn == "companion" and party["companions"]:
         tgt, who = target(party)
-        parts.append(f"This time, add one short separate sentence to or about {who}"
-                     + (" (first name only)." if not tgt["by_title"] else "."))
+        if party.get("no_answer"):
+            parts.append(f"This time, add one short separate sentence about {who}"
+                         + (" (first name only)" if not tgt["by_title"] else "")
+                         + f", said to the traveller. Do not speak to {who} directly, greet them or ask them anything - "
+                           "they are not free to answer just now.")
+            angle = ""
+        else:
+            parts.append(f"This time, add one short separate sentence to or about {who}"
+                         + (" (first name only)." if not tgt["by_title"] else "."))
+        if angle:   # step 2 variety (only with the topics setting on; "" = Stage A1's paragraph, byte for byte)
+            parts.append(f"Make it {angle}. {NOT_THE_ROAD}")
         if known:   # Stage A3: this NPC has traded lines with that companion before (facts only; see acquaint.py)
             parts.append(known)
     elif turn in ("pet", "companion") and party["pets"]:

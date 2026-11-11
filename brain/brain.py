@@ -45,6 +45,8 @@ import dials  # noqa: E402  (5c-2 2b)
 import mood  # noqa: E402  (5c-2 2c)
 import variety  # noqa: E402  (Step B 2026-11-08: repeat catcher)
 import acquaint  # noqa: E402  (Stage A3 2026-11-10: who an NPC has traded lines with)
+import topics  # noqa: E402  (Stage A3 step 2: which broad subjects came up - keywords, no model call)
+import weather  # noqa: E402  (one weather per day for every NPC - the owner's step 2 play test)
 import nature  # noqa: E402  (Step B 2026-11-08: a nature (personality) per ordinary NPC)
 import party  # noqa: E402  (Stage A1 2026-11-09: who travels with the player)
 import exchange  # noqa: E402  (Stage A2 2026-11-09: a spoken exchange between two AI characters, public only)
@@ -101,6 +103,11 @@ DEFAULTS = {
     "exchange_cancel_wait_ms": 2000,
     # Stage A3: the brain-side stop for the acquaintance reader. False = every read answers "off"; rows are still stored.
     "acquaintance": True,
+    # Stage A3 step 2: subjects. False (the default) = no candidates are returned to the shard and none are read; rows that
+    # already carry topics stay valid and are simply not shown. Ingest accepts-and-cleans `topics` either way.
+    "acquaintance_topics": False,
+    # One weather per Central day in every NPC's prompt, so they stop contradicting each other. False = nothing added.
+    "shared_weather": False,
     "exchange_max_tokens": 60,
     "rumour_pair_share": 0.35,    # "what news": two different people's stories, both name-free (Codex finding 1)
     "rumour_live_share": 0.25,   # the owner, chat, 2026-10-30:
@@ -1428,12 +1435,24 @@ class Handler(BaseHTTPRequestHandler):
                         # Codex code R1 (A3-C2): remark() never raises - a failure here must not cost the A1 paragraph.
                         ask_known = acquaint.parse_known({**pty["known"], "other_id": tgt.get("id")}) \
                             if isinstance(pty.get("known"), dict) else None
-                        acq_state, known = acquaint.remark(LEDGER, npc, ask_known, who, cards.rules,
-                                                           CFG.get("acquaintance", True), cards.CENTRAL)
-                    situation = (situation + "\n\n" + party.block(pty, party_turn, known)).strip()
+                        t_on = bool(CFG.get("acquaintance", True) and CFG.get("acquaintance_topics", False))
+                        acq_state, known, _ = acquaint.remark3(
+                            LEDGER, npc, ask_known, who, cards.rules, CFG.get("acquaintance", True), cards.CENTRAL,
+                            topics.suggest_map if t_on else None, "party")
+                    angle = ""
+                    if party_turn == "companion" and pty["companions"] and CFG.get("acquaintance_topics", False):
+                        angle = rumour_speech.RNG.choice(party.ANGLES)
+                    situation = (situation + "\n\n" + party.block(pty, party_turn, known, angle)).strip()
             except Exception as e:
                 pty = None
                 log(event="party", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
+        # One weather for the day, the same in every NPC's prompt (weather.py). line() never raises; off = "". Townsfolk
+        # and named NPCs (layout v1); a companion's own reply (v2) has a fixed token budget and is left alone - her
+        # exchange lines do get it (exchange.rules).
+        if not v2:
+            wx = weather.line(acquaint.central_today(cards.CENTRAL), CFG.get("shared_weather", False))
+            if wx:
+                situation = (situation + "\n\n" + wx).strip()
         stats = {}
         try:
             # "about": the model sees the sentinel where the line named the person, so question and gossip match.
@@ -1789,10 +1808,18 @@ class Handler(BaseHTTPRequestHandler):
             began = True
             # Codex code R1 (A3-C2): remark() never raises and opens the rules file only when a read was asked for and
             # the switch is on - with A3 off this handler depends on nothing A2 did not.
-            acq_state, known = acquaint.remark(LEDGER, npc, ask["known"], ask["addressee"]["first"], cards.rules,
-                                               CFG.get("acquaintance", True), cards.CENTRAL)
+            topics_on = bool(CFG.get("acquaintance", True) and CFG.get("acquaintance_topics", False))
+            # Step 2 (trial 1 -> 2, 2026-11-10): subjects these two have already covered are never named - that primed
+            # them. Instead up to two everyday subjects they have NOT covered replace "the road, the weather" in the rules.
+            acq_state, known, fresh = acquaint.remark3(LEDGER, npc, ask["known"], ask["addressee"]["first"], cards.rules,
+                                                       CFG.get("acquaintance", True), cards.CENTRAL,
+                                                       topics.suggest_map if topics_on else None)
+            if topics_on and not fresh:
+                # Nothing on record for these two (or memory off / unavailable): still vary the everyday subjects -
+                # the fixed "the road, the weather" list is why every chat drifted there (the owner, 2026-11-10).
+                fresh = acquaint.offer(topics.suggest_map)
             tag["acq"] = acq_state
-            system = SYSTEM_RULES + "\n\n" + persona["text"] + "\n\n" + exchange.rules(ask, known)
+            system = SYSTEM_RULES + "\n\n" + persona["text"] + "\n\n" + exchange.rules(ask, known, fresh, weather.line(acquaint.central_today(cards.CENTRAL), CFG.get("shared_weather", False)), follow=topics_on)
             budget_ms = min(int(req.get("budget_ms") or CFG["exchange_budget_ms"]), CFG["exchange_budget_ms"])
             say, stats = ollama_line(system, exchange.record(ask), max(0.5, (budget_ms - 250) / 1000),
                                      CFG["exchange_max_tokens"])
@@ -1805,8 +1832,15 @@ class Handler(BaseHTTPRequestHandler):
                 done("refused", why=why, say_sha=decency.fingerprint(say), **stats)
                 answer({"ok": False, "error": f"refused ({why})"})
                 return
-            done("ok", model=CFG["model"], say=say, **stats)
-            answer({"ok": True, "say": say, "action": "none", "model": CFG["model"], "kind": "exchange"})
+            out = {"ok": True, "say": say, "action": "none", "model": CFG["model"], "kind": "exchange"}
+            # Step 2: a CANDIDATE - the subjects of the exchange lines already said plus this one, never the opening
+            # line (transcript[0] is the NPC's reply to the player). The shard keeps it only if this line is really
+            # spoken (Codex S2-D2). None = no classification offered: the field is left out. Never raises.
+            cand = topics.candidate([ln["text"] for ln in ask["transcript"][1:]] + [say], topics_on)
+            if cand is not None:
+                out["topics"] = cand
+            done("ok", model=CFG["model"], say=say, **({"topics": cand} if cand is not None else {}), **stats)
+            answer(out)
         except exchange.Refused as e:
             done("rejected", reason=str(e))
             answer({"ok": False, "error": f"rejected: {e}"})
@@ -1877,16 +1911,22 @@ class Handler(BaseHTTPRequestHandler):
         try:
             req = json.loads(self.read_body() or b"{}")
             if op == "events":
+                cleaned_before = sum(LEDGER.topics_cleaned.values())
                 acked, rejected = LEDGER.ingest(req.get("events") or [])
+                if sum(LEDGER.topics_cleaned.values()) != cleaned_before:   # counts by reason only - never the payload
+                    log(event="memory", op="ingest", outcome="topics_cleaned", counts=dict(LEDGER.topics_cleaned))
                 if rejected:
                     log(event="memory", op="ingest", outcome="rejected", rejected=rejected)
-                self.send_json(200, {"ok": True, "acked": acked, "rejected": rejected})
+                # Step 2 (Codex design R2, answer 2): this ingest understands the optional `topics` field on
+                # talked_with. The shard writes and delivers such rows only to a brain that says so here.
+                self.send_json(200, {"ok": True, "acked": acked, "rejected": rejected, "talked_with_topics": 1})
             elif op == "reconcile":
                 verdict, rolled, reason = LEDGER.reconcile(req["new_epoch"], req["saved_epoch"], req["saved_seq"],
                                                            req.get("outbox_min_seq"))
                 log(event="memory", op="reconcile", outcome=verdict, rolled_back=rolled, reason=reason,
                     new_epoch=req["new_epoch"], saved_epoch=req["saved_epoch"], saved_seq=req["saved_seq"])
-                self.send_json(200, {"ok": True, "verdict": verdict, "rolled_back": rolled, "reason": reason})
+                self.send_json(200, {"ok": True, "verdict": verdict, "rolled_back": rolled, "reason": reason,
+                                     "talked_with_topics": 1})
             elif op == "status":
                 self.send_json(200, {"ok": True, **LEDGER.status(req.get("npc_id"), req.get("char_id"))})
             else:

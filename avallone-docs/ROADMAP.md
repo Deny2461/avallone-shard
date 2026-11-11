@@ -77,7 +77,7 @@ toward NPCs who "do their own thing".
 | 5c-2 · step B | A **nature** for every townsperson, a **conversation lock** (who you are talking to), a repeat catcher | ✅ |
 | 5c-2 · stage A1 | NPCs notice the companions and pets travelling with you, and now and then speak to or about them | ✅ |
 | 5c-2 · stage A2 | Your companion and an NPC trade a few lines (a shared two-speaker engine, later reused for villagers talking to each other) | ✅ |
-| 5c-2 · stage A3 | NPCs remember who they have talked with (step 1: that they met; step 2, planned: what about) | ✅ step 1 |
+| 5c-2 · stage A3 | NPCs remember who they have talked with (step 1: that they met; step 2: which broad subjects, so they vary what they talk about) | ✅ |
 | 5c-2 · promise guard | A stronger guard that spots a claimed promise and rewrites a reply that gives in | ⏸️ |
 | 5c-2 · 2d | Rumours that drift, get corrected, and carry how sure the teller is | 📐 |
 | 5c-2 · 2e | Rumours on the same memory model, plus a town-wide reputation | 📐 |
@@ -98,15 +98,17 @@ Gemma 4 26B model (November 2026). Mood went live on it.
 
 ## Coming next
 
-### Phase 6 — Enemies with personality 💡
-Brigand leaders, orc captains and liches who taunt, bargain, threaten, parley and surrender, aware of who
-they are fighting. A high-level tactical advisor (flee, call allies, focus the healer) on top of the stock
-combat AI. Later: named villains who remember their defeats and come back.
-
-### Phase 7 — Daily life 💡
+### Phase 6 — Daily life 💡
 NPC schedules (sleep, work, tavern, temple), driven by cheap deterministic code, with the model adding
 colour. This includes **villagers talking to each other** within earshot, built so a player's words always
 come first and NPC speech never sets off an endless chain.
+
+### Phase 7 — Enemies with personality 💡
+Brigand leaders, orc captains and liches who taunt, bargain, threaten, parley and surrender, aware of who
+they are fighting. A high-level tactical advisor (flee, call allies, focus the healer) on top of the stock
+combat AI. Later: named villains who remember their defeats and come back.
+Built after daily life on purpose: camps that keep watches and enemies who talk among themselves reuse its schedules
+and its talk between characters.
 
 ### Phase 8 — Quests from templates 💡
 The model writes the story and the dialogue. The server picks the template (fetch, slay, escort,

@@ -80,7 +80,7 @@ class RowShape(unittest.TestCase):
             None, [], "x", {},
             {k: v for k, v in self.GOOD.items() if k != "lines"},                    # a key missing
             dict(self.GOOD, name="Elspeth Vale"),                                    # a name is never stored
-            dict(self.GOOD, text="what was said"), dict(self.GOOD, town="Britain"), dict(self.GOOD, topics=["road"]),
+            dict(self.GOOD, text="what was said"), dict(self.GOOD, town="Britain"),   # (`topics` is cleaned, not refused, since step 2: test_topics.py)
             dict(self.GOOD, day="10/11/2026"), dict(self.GOOD, day="2026-13-40"), dict(self.GOOD, day=20261110),
             dict(self.GOOD, mpt=-1), dict(self.GOOD, mpt=float("nan")), dict(self.GOOD, mpt=float("inf")),
             dict(self.GOOD, mpt=True), dict(self.GOOD, mpt="5"),
@@ -165,7 +165,7 @@ class Reader(Base):
         self.led.ingest([talked(1, 1, day="2026-11-08", mpt=100), talked(1, 2, day="2026-11-10", mpt=300),
                          talked(1, 3, day="2026-11-10", mpt=310),          # a second row the same day (after a restart)
                          talked(1, 4, day="2026-11-09", mpt=320)])         # out of calendar order: last_day is the latest DAY
-        self.assertEqual(self.read(), {ELS: {"days": 3, "last_day": "2026-11-10"}})
+        self.assertEqual(self.read(), {ELS: {"days": 3, "last_day": "2026-11-10", "topics": []}})
 
     def test_only_this_rememberer(self):
         self.led.ingest([talked(1, 1), talked(1, 2, npc=ELS, other=NPC, kind="townsperson")])

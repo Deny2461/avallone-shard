@@ -144,6 +144,7 @@ class Ledger:
     def __init__(self, path):
         self.path = path
         self.lock = threading.Lock()   # one writer: the brain is a ThreadingHTTPServer
+        self.topics_cleaned = {}       # A3 step 2: why-cleaned -> count since start (diagnostics only)
         self.db = sqlite3.connect(path, check_same_thread=False, isolation_level=None, timeout=5)
         self.db.row_factory = sqlite3.Row
         for pragma in ("journal_mode=WAL", "synchronous=FULL", "foreign_keys=ON", "busy_timeout=5000"):
@@ -311,10 +312,14 @@ class Ledger:
                         if kind in ("visit_summary", "visited", "reply_delivered", "traded", "gift_given",
                                     "player_used_hateful_language"):
                             check_named(kind, ev.get("facts"))
+                        raw_facts = ev.get("facts")
                         if kind == "talked_with":
                             import acquaint
-                            acquaint.check_facts(ev.get("facts"))
-                        facts = clean_facts(ev.get("facts") or {})
+                            # Step 2 (Codex S2-D1): `topics` is cleaned to registry ids, never a reason to reject.
+                            raw_facts, why_cleaned = acquaint.check_facts(raw_facts)
+                            if why_cleaned:
+                                self.topics_cleaned[why_cleaned] = self.topics_cleaned.get(why_cleaned, 0) + 1
+                        facts = clean_facts(raw_facts or {})
                         at = clean_text(ev.get("at_utc", ""), 30)
                     except (KeyError, TypeError, ValueError) as e:
                         rejected.append(eid)
@@ -968,6 +973,7 @@ def _acquaintances(self, npc_id, epoch, now_mpt, fade_s, tail=400, queue=8):
             self.rdb.execute("COMMIT")
     if rows is None:
         return None
+    import acquaint
     out = {}
     for r in rows:
         if r["char_id"] in dead:
@@ -975,6 +981,7 @@ def _acquaintances(self, npc_id, epoch, now_mpt, fade_s, tail=400, queue=8):
         try:
             f = json.loads(r["facts"])
             mpt, other, day = float(f["mpt"]), str(f["other_id"]), str(f["day"])
+            tids = acquaint.clean_topics(f["topics"])[0] if "topics" in f else []
         except (KeyError, TypeError, ValueError):
             continue
         age = float(now_mpt) - mpt
@@ -984,11 +991,12 @@ def _acquaintances(self, npc_id, epoch, now_mpt, fade_s, tail=400, queue=8):
         if e is None:
             if len(out) >= int(queue):
                 continue                      # a ninth speaker: outside the queue
-            e = out[other] = {"days": set(), "last_day": day}
-        e["days"].add(day)
+            e = out[other] = {"days": {}, "last_day": day}
+        e["days"].setdefault(day, set()).update(tids)   # step 2: same pass, union per day (restart duplicates add nothing)
         if day > e["last_day"]:
             e["last_day"] = day
-    return {k: {"days": len(v["days"]), "last_day": v["last_day"]} for k, v in out.items()}
+    return {k: {"days": len(v["days"]), "last_day": v["last_day"], "topics": acquaint.rank_topics(v["days"])}
+            for k, v in out.items()}
 
 
 Ledger.pair_rows = _pair_rows

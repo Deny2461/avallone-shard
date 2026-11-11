@@ -163,6 +163,10 @@ public readonly record struct AiReply(AiOutcome Outcome, string Text, string Mod
     // Stage A2: "shop" when the brain added a how-to-trade line; "exchange" on an exchange step.
     public string Kind { get; init; }
 
+    // Stage A3 step 2: on an exchange step, the brain's CANDIDATE subjects for the lines said so far plus this one.
+    // null = no classification offered; empty = classified, nothing matched. Kept only if the line is really spoken.
+    public string[] Topics { get; init; }
+
     public static AiReply Success(string text, string model) => new(AiOutcome.Ok, text, model, 0, null);
 
     public static AiReply Fail(AiOutcome outcome, string error = null) => new(outcome, null, null, 0, error);

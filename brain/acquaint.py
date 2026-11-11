@@ -10,6 +10,7 @@ most TAIL examined rows, grouped by the other speaker, the QUEUE newest speakers
 sentence. A miss says nothing (it may be forgotten, pushed out, or older than this feature); "unavailable" says nothing too.
 """
 import math
+import random
 import re
 from datetime import date, datetime
 
@@ -21,16 +22,47 @@ DEFAULT_FADE_HOURS = 120.0   # memory-hours (the owner, chat, 2026-11-10); memor
 _DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 _ID = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$")
 KEYS = {"day", "mpt", "other_kind", "other_id", "lines"}
+_RNG = random.Random()
+# Step 2 (Codex S2-D1): the PERMANENT topic-id registry. Ids are only ever appended - never removed, renamed or given a new
+# meaning - so a stored or queued row can never become invalid because the keyword file (topics.json) was tuned.
+# The order is the tie-break order. test_topics.py pins this list release by release.
+TOPIC_IDS = ("road", "weather", "trade", "food", "healing", "work", "animals", "sea", "town", "family", "rest", "clothes",
+             "danger", "magic", "land")
+TOPIC_SET = frozenset(TOPIC_IDS)
+MAX_TOPICS = 2      # ids on one stored row
+FRESH_TOPICS = 2    # uncovered everyday subjects offered in one prompt
 
 
 def _num(v):
     return not isinstance(v, bool) and isinstance(v, (int, float)) and math.isfinite(v)
 
 
+def clean_topics(raw):
+    """(ids, why): the optional `topics` field reduced to what is certain - registry ids, no duplicates, at most
+    MAX_TOPICS. `why` names the first thing that had to be cleaned ("" when nothing was). Never raises and never keeps
+    anything that is not a registry id, so the stored field cannot hold free text."""
+    if not isinstance(raw, list):
+        return [], "not_list"
+    out, why = [], ""
+    for x in raw[:20]:
+        if isinstance(x, str) and x in TOPIC_SET:
+            if x in out:
+                why = why or "duplicate"
+            else:
+                out.append(x)
+        else:
+            why = why or "unknown"
+    if len(raw) > 20 or len(out) > MAX_TOPICS:
+        why = why or "too_many"
+    return out[:MAX_TOPICS], why
+
+
 def check_facts(facts):
-    """The shard sends exactly this shape; anything else is rejected at the door."""
-    if not isinstance(facts, dict) or set(facts) != KEYS:
-        raise ValueError("talked_with needs exactly {day, mpt, other_kind, other_id, lines}")
+    """The five base keys are checked strictly: anything wrong there, or any other extra key, is rejected at the door.
+    The optional `topics` is CLEANED, never a reason to refuse (Codex S2-D1: the shard drops a rejected row for good).
+    Returns (facts to store, why-cleaned): the base keys in the order they came, plus `topics` only if ids survive."""
+    if not isinstance(facts, dict) or not KEYS <= set(facts) or set(facts) - KEYS - {"topics"}:
+        raise ValueError("talked_with needs exactly {day, mpt, other_kind, other_id, lines} (+ optional topics)")
     if not isinstance(facts["day"], str) or not _DAY.match(facts["day"]):
         raise ValueError("talked_with day malformed")
     try:
@@ -46,6 +78,31 @@ def check_facts(facts):
     n = facts["lines"]
     if isinstance(n, bool) or not isinstance(n, int) or not 1 <= n <= 10:
         raise ValueError("talked_with lines malformed")
+    out = {k: v for k, v in facts.items() if k != "topics"}
+    why = ""
+    if "topics" in facts:
+        ids, why = clean_topics(facts["topics"])
+        if ids:
+            out["topics"] = ids
+    return out, why
+
+
+def rank_topics(by_day):
+    """Step 2 reader (Codex Q2). `by_day`: {day: set of ids} for ONE other speaker - the union of that day's rows, so the
+    duplicate rows a shard restart writes add no weight. Most distinct days first, then the most recent such day, then
+    registry order. A sample of what came up, not a complete list."""
+    score = {}
+    for day, ids in by_day.items():
+        for t in ids:
+            if t in TOPIC_SET:
+                n, last = score.get(t, (0, ""))
+                score[t] = (n + 1, max(last, day))
+    order = {t: i for i, t in enumerate(TOPIC_IDS)}
+    # newest day first among equals: sort by registry order, then stably by day descending, then by count descending
+    ranked = sorted(score, key=lambda t: order[t])
+    ranked.sort(key=lambda t: score[t][1], reverse=True)
+    ranked.sort(key=lambda t: score[t][0], reverse=True)
+    return ranked
 
 
 def parse_known(raw):
@@ -79,6 +136,30 @@ def look(ledger, npc_id, known, rules=None, enabled=True):
     return ("known", entry) if entry else ("none", None)
 
 
+def remark3(ledger, npc_id, known, who, rules_fn=None, enabled=True, tz=None, suggest_fn=None, path="exchange", pick=None):
+    """Step 2: (state, sentence, fresh). The sentence is ALWAYS the step-1 sentence - covered subjects are never named
+    (trial 1) - and `fresh` is up to two everyday subjects the two have NOT covered: [] when topics are off
+    (`suggest_fn` None), nothing is on record, or anything at all goes wrong. NEVER raises; trouble with the subjects
+    costs only the subjects. State "known_topics" when fresh subjects are offered. On the "party" path the offer is one
+    extra sentence scoped to the aside to the companion; on the "exchange" path the caller hands `fresh` to
+    exchange.rules(), which swaps them into its list of everyday subjects."""
+    state, text = remark(ledger, npc_id, known, who, rules_fn, enabled, tz)
+    if state != "known" or not suggest_fn:
+        return state, text, []
+    try:
+        entry = look(ledger, npc_id, known, rules_fn() if rules_fn else None, enabled)[1]
+        fresh = [str(x) for x in fresh_labels(entry, suggest_fn, pick)][:FRESH_TOPICS]
+    except Exception:
+        fresh = []
+    if fresh and path == "party":
+        text += f" If you add a word to {who}, {listed_or(fresh)} would be fresh ground between you."
+    return ("known_topics" if fresh else "known"), text, fresh
+
+
+def listed_or(labels):
+    return labels[0] if len(labels) == 1 else ", ".join(labels[:-1]) + " or " + labels[-1]
+
+
 def remark(ledger, npc_id, known, who, rules_fn=None, enabled=True, tz=None):
     """(state, sentence) for a prompt. NEVER raises (Codex code R1, A3-C2): this memory is optional, so a missing or
     broken rules file, a broken ledger or a bad entry costs the sentence - never the exchange line, never the A1 party
@@ -93,6 +174,34 @@ def remark(ledger, npc_id, known, who, rules_fn=None, enabled=True, tz=None):
         return ("known", text) if text else ("none", "")
     except Exception:
         return "unavailable", ""
+
+
+def fresh_labels(entry, suggest_fn, pick=None, n=FRESH_TOPICS):
+    """Trial 1 (2026-11-10): NAMING the covered subjects did not move the talk off them (24/48 -> 28/48 lines on the road
+    or the weather) - a named subject is a primed subject. So the memory is used the other way round: up to `n` everyday
+    subjects these two have NOT covered, for the prompt to offer (trial 2: 29/48 -> 16/48). [] when nothing is on record
+    or there is nothing to offer."""
+    ids = entry.get("topics") if isinstance(entry, dict) else None
+    if not suggest_fn or not ids:
+        return []
+    have = suggest_fn() or {}
+    covered = set(ids)
+    pool = [have[t].strip() for t in TOPIC_IDS if t in have and t not in covered and isinstance(have[t], str) and have[t].strip()]
+    if len(pool) <= n:
+        return pool
+    return list((pick or _RNG.sample)(pool, n))
+
+
+def offer(suggest_fn, pick=None, n=FRESH_TOPICS):
+    """Two everyday subjects for an exchange between speakers with nothing on record (a first meeting, memory off or
+    unavailable): the same offer, with nothing excluded. the owner, chat, 2026-11-10
+    NEVER raises: [] on any trouble."""
+    try:
+        have = suggest_fn() or {}
+        pool = [have[t].strip() for t in TOPIC_IDS if t in have and isinstance(have[t], str) and have[t].strip()]
+        return [str(x) for x in (pool if len(pool) <= n else (pick or _RNG.sample)(pool, n))][:n]
+    except Exception:
+        return []
 
 
 def how_often(days):

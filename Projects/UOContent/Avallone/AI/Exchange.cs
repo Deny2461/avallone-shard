@@ -89,6 +89,9 @@ public static class Exchange
     internal static Func<string> Today = () => Named.NamedNpcs.Today(Core.Now);
     internal static Func<long> EpochNow = () => AiLedger.Epoch;
     internal static Func<double> MemoryClock = () => Rumours.PlayedClock.MemorySeconds;
+    // Stage A3 step 2: may a talked_with row carry topics right now? Only when the brain's ingest has confirmed it.
+    internal static Func<bool> TopicsIngestOk = () => AiLedger.TopicsIngest;
+    public static int TalksWithTopics { get; private set; }
 
     public sealed record Voice(
         Mobile Mobile, string Kind, Guid AiId, string PersonaKey, Dictionary<string, string> Vars, string Name, string Title,
@@ -106,6 +109,9 @@ public static class Exchange
         public bool CallOut;            // a step's model call is out right now
         public bool Unanswered;         // the last call ended WITHOUT the brain's answer (timeout, transport failure)
         public bool Extended;           // one extra line was granted because the closing line was a question
+        // Step 2 (Codex S2-D2): the subjects of the lines REALLY spoken. Replaced only after Speak succeeds; a reply that
+        // is refused, late, pre-empted or thrown away by the last check never touches it. null = nothing committed.
+        public string[] Topics;
         public readonly List<ExchangeLine> Transcript = [];
         public string[] Roster;
         public long DeadlineAt;
@@ -182,7 +188,9 @@ public static class Exchange
         );
         e.Mobile.SendMessage(
             $"NPC memory of who they talked with is {(MemoryOn ? "ON" : "OFF")} (saved); {TalksRecorded} recorded, " +
-            $"{TalksNotRecorded} not recorded (memory off or full) since start."
+            $"{TalksNotRecorded} not recorded (memory off or full) since start; {TalksWithTopics} with subjects " +
+            $"(the brain's memory {(AiLedger.TopicsIngest ? "accepts" : "has NOT confirmed it accepts")} them" +
+            $"{(AiLedger.TopicsHeld > 0 ? $"; {AiLedger.TopicsHeld} HELD" : "")})."
         );
     }
 
@@ -224,6 +232,22 @@ public static class Exchange
     }
 
     // ---- starting ---------------------------------------------------------------------------------------------------
+
+    // Step 2 play test 2 (the owner, in game, to an NPC who had just greeted Elspeth): the pacing
+    // rules below can already rule an exchange out BEFORE the NPC's reply is written. The request then says so
+    // (TravelParty.PartyAsk.NoAnswer) and the NPC speaks about the companion, not to her. Only the rules that are known
+    // up front are checked here - the same ones TryStart applies; a busy model or a stale reply can still stop one later.
+    public static bool CannotAnswerNow(Mobile npc, Mobile player)
+    {
+        if (!Enabled || npc == null || player is not PlayerMobile pm)
+        {
+            return false; // exchanges off: Stage A1 behaviour, request unchanged
+        }
+
+        var since = _since.TryGetValue(pm.Serial, out var n) ? n : RepliesBetween;
+        return since < RepliesBetween || _active != null ||
+               _restUntil.TryGetValue(npc.Serial, out var until) && AiGateway.Clock() < until;
+    }
 
     // Called by a townsperson or Mirabel right after a reply to `from` was really SAID. `excluded`: a gossip, decency
     // or shop-line turn. `openingRevision`: RevisionOf(from) read when the turn this reply answers began - if the
@@ -490,6 +514,14 @@ public static class Exchange
                 run.Lines++;
                 LinesSaid++;
                 run.Transcript.Add(new ExchangeLine(speaker.Name, text));
+                if (reply.Topics != null)
+                {
+                    // The candidate covered the spoken lines plus this one, and this one has now been spoken. An answer
+                    // without the field (topics switched off part-way, classifier trouble) leaves what was committed;
+                    // an empty list means "nothing matched" and clears it.
+                    run.Topics = reply.Topics;
+                }
+
                 logger.Information(
                     "Exchange step {Id} {Step}/{Max}: {Speaker} said \"{Text}\" ({Elapsed} ms)",
                     run.Id, step + 1, run.Steps, speaker.Name, text, AiGateway.Clock() - began
@@ -619,10 +651,14 @@ public static class Exchange
                 continue;
             }
 
-            var facts = new
-            {
-                day, mpt, other_kind = other.Kind, other_id = other.AiId.ToString(), lines = Math.Clamp(run.Lines, 1, MaxSteps)
-            };
+            var lines = Math.Clamp(run.Lines, 1, MaxSteps);
+            var otherId = other.AiId.ToString();
+            // Step 2: topics ride along only when some were committed AND the brain's ingest has confirmed it accepts
+            // them. Otherwise the row is the five-key step-1 row, byte for byte.
+            var withTopics = run.Topics is { Length: > 0 } && TopicsIngestOk();
+            object facts = withTopics
+                ? new { day, mpt, other_kind = other.Kind, other_id = otherId, lines, topics = run.Topics }
+                : new { day, mpt, other_kind = other.Kind, other_id = otherId, lines };
             bool ok;
             try
             {
@@ -638,6 +674,10 @@ public static class Exchange
             {
                 _talked.Add((me.AiId, other.AiId));
                 TalksRecorded++;
+                if (withTopics)
+                {
+                    TalksWithTopics++;
+                }
             }
             else
             {
@@ -718,7 +758,8 @@ public static class Exchange
         MemoryOn = false;
         _talked.Clear();
         _talkedDay = "";
-        TalksRecorded = TalksNotRecorded = 0;
+        TalksRecorded = TalksNotRecorded = TalksWithTopics = 0;
+        TopicsIngestOk = () => AiLedger.TopicsIngest;
         Recorder = AiLedger.TryRecord;
         Today = () => Named.NamedNpcs.Today(Core.Now);
         EpochNow = () => AiLedger.Epoch;
