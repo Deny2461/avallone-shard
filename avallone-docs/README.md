@@ -41,18 +41,27 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
 - **People remember.** Named NPCs remember what you told them, what you gave them and how often you visit.
   A regular is greeted differently from a stranger.
 - **News travels.** Kill something notable, get drunk in the tavern or come back after a long absence, and
-  the story spreads town to town along the roads. It gets a little garbled as it goes, and fades with time.
+  the story spreads town to town along the roads. A funny story grows a little as it goes; a death, a murder or a
+  great deed is told as it happened. All of it fades with time.
+- **You can set the record straight.** When someone has just told you a story about yourself, your next line can
+  correct a detail: how many, what, or where ("It was four, not forty."). They take your word for it, and that is the
+  version told from then on. A murder or a death cannot be talked away.
+- **Idle gossip travels too.** The made-up talk of the towns (the price of bread, a wagon with a broken axle) now moves
+  from town to town as stories you can ask more about, alongside the real news.
 - **The moons matter.** When both of Sosaria's moons are bright, the superstitious folk get jumpy and trust
   strangers less.
 - **They notice who you travel with.** Townsfolk and the innkeeper can see your companion and your pets, and now
   and then speak to your companion or remark on your horse, by the name you gave it.
 - **Your companion answers for herself.** When a townsperson speaks to your companion by name, the two may trade a few
-  lines of their own: usually one to three, once in a while a longer chat. They stop as soon as you speak.
+  lines of their own: usually one to three, once in a while a longer chat. They stop as soon as you speak. After a piece
+  of gossip she may add one line of her own.
 - **They remember having met, and roughly what about.** A townsperson who has chatted with your companion knows her next
   time, and she knows them. They remember that they talked and the broad subjects (food, family, trade), not what was
   said, and they are nudged toward something they have not covered yet.
-- **One weather a day.** Ask around town about the weather and you get the same answer from everyone that day. (It does
-  not yet follow the game's own rain and snow.)
+- **One weather a day.** Ask around town about the weather and you get the same answer from everyone that day. When it
+  is really raining or snowing where they stand, that is what they tell you.
+- **You can tell who is talking by colour.** Townsfolk and creatures speak in green; companions and the wandering
+  sellsword in yellow.
 - **A wandering sellsword lives his own life.** He travels, hunts, sells his loot, banks and rests, whether
   or not anyone is watching.
 

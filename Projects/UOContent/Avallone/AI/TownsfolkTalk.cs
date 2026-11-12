@@ -535,6 +535,12 @@ public static class TownsfolkTalk
         var town = TownOf(npc);
         var follow = talk.History.Count > 0 && talk.History[^1].Text == Server.Avallone.Rumours.RumourSpeech.Marker ? talk.FollowRumour : null;
 
+        // Codex A2-R1: the player's speech count at THIS turn. If they say anything else before the reply is delivered,
+        // that reply may still be said but can no longer start an exchange.
+        var openingRevision = Exchange.RevisionOf(from);
+        // Rumour step, Part A: this line uses up the correction ticket, if the last reply left one (Corrections.cs).
+        var fix = Server.Avallone.Rumours.Corrections.Take(npc, from, openingRevision);
+
         var request = new AiRequest(AiIdentity.GetOrCreate(npc), AiIdentity.GetOrCreate(from), null, text, AiPriority.Conversation)
         {
             PersonaKey = PersonaKey,
@@ -542,14 +548,13 @@ public static class TownsfolkTalk
             History = Server.Avallone.Rumours.RumourSpeech.History(talk.History),
             Rumours = Server.Avallone.Rumours.RumourSpeech.Ask(npc, from, text, firstLine, follow, Server.Avallone.Rumours.RumourSpeech.TownOf(npc)),
             Standing = Relations.Standing(npc, from), // 5c-2 2b
-            Party = TravelParty.For(npc, from) // Stage A1: companions + pets the NPC can see
+            Party = TravelParty.For(npc, from), // Stage A1: companions + pets the NPC can see
+            Falling = RealWeather.Word(npc), // rumour step C3
+            Correction = Server.Avallone.Rumours.Corrections.AskFor(fix)
         };
 
         npc.Direction = npc.GetDirectionTo(from);
 
-        // Codex A2-R1: the player's speech count at THIS turn. If they say anything else before the reply is delivered,
-        // that reply may still be said but can no longer start an exchange.
-        var openingRevision = Exchange.RevisionOf(from);
         var reply = await AiGateway.RequestAsync(request);
 
         if (npc.Deleted || !npc.Alive || from.Deleted || from.NetState == null || from.Map != npc.Map ||
@@ -570,15 +575,21 @@ public static class TownsfolkTalk
             return; // a gossip line that failed its name check is not said (townsfolk fail silently)
         }
 
+        // Part A: the accepting line is said only if the correction is now in the saved outbox; else the ordinary reply.
+        spoken = Server.Avallone.Rumours.Corrections.Commit(npc, from, fix, reply) ?? spoken;
         npc.Direction = npc.GetDirectionTo(from);
         npc.Say(spoken);
         TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency"); // A1 floor
         // Stage A2: if this line spoke to the player's companion by name, she may answer (switch avallone.ai.exchanges).
-        Exchange.AfterReply(npc, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop", openingRevision);
+        Exchange.AfterReply(
+            npc, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop",
+            openingRevision, Exchange.ReactSortOf(reply) // rumour step C1
+        );
         Relations.Visited(npc, from); // 5c-2 2b: familiarity + the day's warmth, only once a reply was really said
         Relations.Conduct(npc, from, reply);
         talk.Last = Core.Now;
         talk.FollowRumour = Server.Avallone.Rumours.RumourSpeech.FollowId(reply);
+        Server.Avallone.Rumours.Corrections.AfterReply(npc, from, reply, openingRevision); // Part A: a ticket, or none
         Remember(talk.History, "player", text);
         Remember(talk.History, "npc", TravelParty.ForHistory(Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken), request.Party));
     }

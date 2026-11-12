@@ -295,6 +295,79 @@ public partial class Weather
         }
     }
 
+    // Avallone, rumour step C3 (2026-11-11; the owner's carry-in): what is falling
+    // at a spot RIGHT NOW, by the same rules OnTick uses when it sends weather to a screen. READ-ONLY: it rolls nothing,
+    // moves no timer and no storm, and creates no weather list. Unknown = the game cannot place the spot (no map, or the
+    // internal map). A facet with no weather of its own is Dry: no screen there ever shows any.
+    public enum Falling
+    {
+        Unknown,
+        Dry,
+        Rain,
+        Snow
+    }
+
+    public static Falling FallingAt(Map map, Point3D location)
+    {
+        if (map == null || map == Map.Internal)
+        {
+            return Falling.Unknown;
+        }
+
+        if (!m_WeatherByFacet.TryGetValue(map, out var list))   // never GetWeatherList here: that one adds an empty list
+        {
+            return Falling.Dry;
+        }
+
+        for (var i = 0; i < list.Count; ++i)
+        {
+            var weather = list[i];
+            var now = weather.FallingNow();
+
+            if (now != Falling.Dry && weather.Covers(location))
+            {
+                return now;   // the first in list order, so the answer is the same on every call until the next tick
+            }
+        }
+
+        return Falling.Dry;
+    }
+
+    // The same test OnTick makes for each screen: no area at all = the whole facet.
+    private bool Covers(Point3D location)
+    {
+        var contains = Area.Length == 0;
+
+        for (var j = 0; !contains && j < Area.Length; ++j)
+        {
+            contains = Area[j].Contains(location);
+        }
+
+        return contains;
+    }
+
+    // What the last tick sent. OnTick sends for m_Stage and only THEN advances it, so the stage a screen last got is the
+    // one before m_Stage. Density and temperature are OnTick's own rules; density 0 is its "clear sky" packet (0xFE).
+    private Falling FallingNow()
+    {
+        if (!m_Active)
+        {
+            return Falling.Dry;
+        }
+
+        var sent = (m_Stage + 29) % 30;
+        var density = sent < 15 ? sent * 5 : Math.Clamp(150 - sent * 5, 10, 70);
+
+        if (density == 0)
+        {
+            return Falling.Dry;
+        }
+
+        var temperature = m_ExtremeTemperature ? -Temperature : Temperature;
+
+        return temperature > 0 ? Falling.Rain : Falling.Snow;
+    }
+
     public virtual void OnTick()
     {
         if (m_Stage == 0)

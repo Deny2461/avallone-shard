@@ -37,6 +37,62 @@ class Weather(unittest.TestCase):
             self.assertEqual(weather.line("2026-11-10"), "")                                  # never raises
 
 
+class RealWeather(unittest.TestCase):
+    """Rumour step C3 (2026-11-11): the line follows what the game shows falling where the NPC stands."""
+    WET_DAY = next(f"2026-{m:02d}-{d:02d}" for m in range(1, 13) for d in range(1, 29)
+                   if "rain" in weather.today(f"2026-{m:02d}-{d:02d}"))
+    FOG_DAY = next(f"2026-{m:02d}-{d:02d}" for m in range(1, 13) for d in range(1, 29)
+                   if "fog" in weather.today(f"2026-{m:02d}-{d:02d}"))
+    DRY_DAY = "2026-11-10"
+
+    def test_setting_off_is_the_old_sentence_whatever_the_shard_says(self):
+        for day in (self.WET_DAY, self.FOG_DAY, self.DRY_DAY):
+            for falling in (None, "dry", "rain", "snow", "hail", 7):
+                self.assertEqual(weather.line(day, True, falling, False), weather.line(day))
+                self.assertEqual(weather.line(day, True, falling), weather.line(day))        # real defaults to off
+
+    def test_rain_and_snow_replace_the_days_description(self):
+        for day in (self.WET_DAY, self.DRY_DAY):
+            r, s = weather.line(day, True, "rain", True), weather.line(day, True, "snow", True)
+            self.assertTrue(r.startswith("The weather right now, the same for everyone here: rain is falling, and it is cool. "))
+            self.assertTrue(s.startswith("The weather right now, the same for everyone here: snow is falling, and it is cold. "))
+            self.assertNotIn(weather.today(day), r + s)
+            self.assertIn("Do not bring the weather", r)                                     # still a fact, not a subject
+
+    def test_dry_never_gives_a_wet_kind(self):
+        dry = [t for _, t in weather.DRY_KINDS]
+        self.assertEqual(len(dry), 5)
+        self.assertFalse([t for t in dry if "rain" in t or "fog" in t or "damp" in t])
+        for day in (self.WET_DAY, self.FOG_DAY):
+            text, now = weather.describe(day, "dry", True)
+            self.assertIn(text, dry)
+            self.assertFalse(now)
+            self.assertEqual(weather.describe(day, "dry", True), weather.describe(day, "dry", True))   # stable all day
+        for m in range(1, 13):
+            for d in range(1, 29):
+                self.assertIn(weather.describe(f"2026-{m:02d}-{d:02d}", "dry", True)[0], dry)
+
+    def test_dry_on_a_dry_day_is_the_same_description_as_before(self):
+        self.assertEqual(weather.line(self.DRY_DAY, True, "dry", True), weather.line(self.DRY_DAY))
+
+    def test_unknown_is_the_days_description_as_before(self):
+        for day in (self.WET_DAY, self.FOG_DAY, self.DRY_DAY):
+            for falling in (None, "", "hail", 3, ["rain"]):
+                self.assertEqual(weather.line(day, True, falling, True), weather.line(day))
+
+    def test_the_four_answers_stay_apart(self):
+        got = {w: weather.describe(self.WET_DAY, weather.word(w), True) for w in (None, "dry", "rain", "snow")}
+        self.assertEqual(len(set(got.values())), 4)
+
+    def test_the_companions_sentence_only_while_something_falls(self):
+        self.assertIn("rain is falling", weather.falling_line(True, "rain", True))
+        self.assertIn("snow is falling", weather.falling_line(True, "snow", True))
+        for args in ((True, "dry", True), (True, None, True), (True, "rain", False), (False, "rain", True), (True, "hail", True)):
+            self.assertEqual(weather.falling_line(*args), "")
+        with mock.patch.object(weather, "word", side_effect=RuntimeError("boom")):
+            self.assertEqual(weather.falling_line(True, "rain", True), "")                   # never raises
+
+
 class Paragraphs(unittest.TestCase):
     PARTY = {"companions": [{"name": "Elspeth Vale", "title": "the field healer", "by_title": False}], "pets": []}
     ASK = {"speaker": {"kind": "townsperson", "name": "Osric", "title": "the tanner", "first": "Osric"},
@@ -92,6 +148,68 @@ class H(unittest.TestCase):
         want = json.dumps(self.wx())[1:-1]
         for prompt in (a, b, c, d, e):
             self.assertEqual(prompt.count(want), 1)
+
+    # ---- rumour step C3: the handlers pass the shard's word through, under the real_weather setting ----
+    def _plain(self, falling=None, **over):
+        body = {"request_id": "t", "npc_id": NPC, "subject_id": ta.CHAR, "priority": "Conversation", "persona": "PERSONA",
+                "utterance": "Good day.", "budget_ms": 8000, "history": []}
+        if falling is not None:
+            body["falling"] = falling
+        body.update(over)
+        self.sent.clear()
+        with mock.patch.object(brain.urllib.request, "urlopen", self._fake()):
+            self.post("/v1/npc/respond", body)
+        return json.dumps(self.sent[-1]["messages"])
+
+    def test_real_weather_default_is_off(self):
+        self.assertIs(brain.DEFAULTS["real_weather"], False)
+        with mock.patch.dict(brain.CFG, {"shared_weather": True}):
+            for falling in (None, "rain", "snow", "dry"):
+                p = self._plain(falling)
+                self.assertEqual(p.count(json.dumps(self.wx())[1:-1]), 1)
+                self.assertNotIn("is falling", p)
+
+    def test_real_weather_on_rain_reaches_an_ordinary_reply_and_an_exchange(self):
+        with mock.patch.dict(brain.CFG, {"shared_weather": True, "real_weather": True}):
+            self.assertIn("The weather right now, the same for everyone here: rain is falling", self._plain("rain"))
+            self.assertIn("The weather right now, the same for everyone here: snow is falling", self._plain("snow"))
+            p = self._plain(None)                                                  # the shard did not say: as before
+            self.assertEqual(p.count(json.dumps(self.wx())[1:-1]), 1)
+            self.assertNotIn("is falling", self._plain("hail"))                    # not one of the three words: unknown
+        with mock.patch.dict(brain.CFG, {"shared_weather": False, "real_weather": True}):
+            self.assertNotIn("weather", self._plain("rain").lower())               # needs the shared-weather setting too
+
+    def _chat(self, falling):
+        def fake(url, payload, timeout_s):
+            self.sent.append(json.loads(payload))
+            return {"message": {"content": json.dumps({"say": "And to you."})}, "prompt_eval_count": 1, "eval_count": 1}
+        x = {"id": "x1", "step": 0, "speaker": dict(self.ELSPETH), "addressee": dict(self.TANNER), "trust_band": "warming",
+             "transcript": [{"who": "Osric", "text": "Good day, Elspeth."}], "roster": []}
+        body = {"npc_id": ELS, "persona_key": "elspeth", "request_id": "t", "subject_id": ta.CHAR, "priority": "Background",
+                "budget_ms": 6000, "exchange": x}
+        if falling is not None:
+            body["falling"] = falling
+        with mock.patch.object(brain, "_post_cancellable", fake):
+            self.post("/v1/npc/exchange", body)
+        return json.dumps(self.sent[-1]["messages"])
+
+    def test_real_weather_reaches_a_chat_between_npc_and_companion(self):
+        with mock.patch.dict(brain.CFG, {"shared_weather": True, "real_weather": True}):
+            self.assertIn("The weather right now, the same for everyone here: snow is falling", self._chat("snow"))
+            self.assertEqual(self._chat(None).count(json.dumps(self.wx())[1:-1]), 1)
+        with mock.patch.dict(brain.CFG, {"shared_weather": True}):
+            self.assertNotIn("is falling", self._chat("snow"))                      # real_weather off: as before
+
+    def test_a_companions_own_reply_hears_of_rain_only_while_it_falls(self):
+        with mock.patch.dict(brain.CFG, {"shared_weather": True, "real_weather": True, "prompt_layout": "v2"}):
+            wet = self._plain("rain", priority="Companion")
+            self.assertEqual(wet.count("Right now, where you stand, rain is falling, and it is cool."), 1)
+            for falling in ("dry", None):
+                p = self._plain(falling, priority="Companion")
+                self.assertNotIn("is falling", p)
+                self.assertNotIn("The weather today", p)                             # her own reply never got the day line
+        with mock.patch.dict(brain.CFG, {"shared_weather": True, "prompt_layout": "v2"}):
+            self.assertNotIn("is falling", self._plain("rain", priority="Companion"))   # real_weather off: as before
 
     def _fake(self):
         class R:

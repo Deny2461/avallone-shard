@@ -691,7 +691,8 @@ public abstract partial class BaseWanderer : BaseCreature
             PersonaKey = PersonaKey,
             History = history.ToArray(),
             Situation = TalkSituation(),
-            Standing = Relations.Standing(this, from) // 5c-2 2b
+            Standing = Relations.Standing(this, from), // 5c-2 2b
+            Falling = RealWeather.Word(this) // rumour step C3
         };
 
         Direction = GetDirectionTo(from);

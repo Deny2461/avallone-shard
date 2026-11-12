@@ -122,7 +122,7 @@ public abstract partial class BaseCompanion : BaseCreature
 
     // Said when a reply is taking a while, so the pause reads as her thinking rather than silence (the owner, 2026-10-06).
     // A line written as *...* is an emote, anything else is spoken (the owner, 2026-10-17). None may
-    // react to what kind of line the player said - "that's a question" "sounds artificial" (the owner, 2026-10-17).
+    // react to what kind of line the player said (the owner, 2026-10-17).
     public virtual string[] ThinkingLines => CommonThinkingLines;
 
     // Shared by every companion: no pronouns, nothing tied to one person's trade, so any character can use them on top
@@ -717,7 +717,8 @@ public abstract partial class BaseCompanion : BaseCreature
             History = history.ToArray(),
             Situation = DescribeSituation(from, extra),
             Actions = actions,
-            Secrets = AiSecrets.Offers(this, from, GetTrust(from), DateTime.UtcNow)
+            Secrets = AiSecrets.Offers(this, from, GetTrust(from), DateTime.UtcNow),
+            Falling = RealWeather.Word(this) // rumour step C3
         };
 
         Direction = GetDirectionTo(from);

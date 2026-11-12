@@ -129,6 +129,8 @@ public class PlayedClock : GenericPersistence
         }
     }
 
+    internal static void SetSecondsForTests(long seconds) => Seconds = seconds;   // rumour step, Part A tests
+
     internal static void ResetMemoryForTests()
     {
         _activity.Clear();

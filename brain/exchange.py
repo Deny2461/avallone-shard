@@ -121,6 +121,97 @@ def parse(req, common_words=frozenset()):
             "known": acquaint.parse_known(raw.get("known"))}   # A3: a read request only ({epoch, mpt, other_id}); never text
 
 
+# ---- Rumour step C1 (2026-11-11): the companion's ONE-LINE reaction when an NPC mentions her while telling gossip ----
+# the owner's carry-in. A reply that told gossip never starts an
+# exchange (the reply was written by a model that had the gossip in front of it, and she must not be handed gossip about
+# a player). Codex design R1, RUM-D1: filtering that reply for "gossip words" cannot make it safe - "Elspeth, keep away
+# from that one" passes every word test and still carries the story. So the wall is structural: her reaction is a
+# SEPARATE model call that is given NOTHING the NPC said. It knows only
+#   - her own public persona and the house rules,
+#   - who spoke to her (name and trade - public),
+#   - WHICH SORT of remark it was: one of six fixed sorts that code chose and put in the NPC's prompt BEFORE that reply
+#     was written (party.ANGLES, same order), never worked out from the reply.
+# The cost, accepted: her line sometimes fits the NPC's actual words loosely.
+REACTIONS = ("greeted you in a plain, friendly way", "made a remark on your trade or calling",
+             "asked you, in a friendly way, how your day goes", "bade you welcome to this place",
+             "made a light remark on your manner or mood", "showed you a small courtesy, as to any guest")
+
+
+def is_reaction(req):
+    raw = req.get("exchange") if isinstance(req, dict) else None
+    return isinstance(raw, dict) and raw.get("react") is not None
+
+
+def parse_reaction(req, common_words=frozenset()):
+    """The validated reaction step, or raises Refused. Reads ONLY id, step, the two speakers, the roster (to refuse a
+    speaker who shares a player's name), the companion's trust band and the sort number. It NEVER reads a transcript:
+    whatever the request carries there is not looked at, so nothing the NPC said can reach the prompt."""
+    raw = req.get("exchange")
+    if not isinstance(raw, dict):
+        raise Refused("no exchange")
+    xid = str(raw.get("id") or "")
+    if not _ID.match(xid):
+        raise Refused("id")
+    if raw.get("step") != 0 or isinstance(raw.get("step"), bool):
+        raise Refused("step")                                 # a reaction is one line, the first and the last
+    sort = raw.get("react")
+    if not isinstance(sort, int) or isinstance(sort, bool) or not 0 <= sort < len(REACTIONS):
+        raise Refused("react")
+    roster = [str(x).strip() for x in (raw.get("roster") or [])[:2000] if isinstance(x, str) and str(x).strip()]
+    taken = set()
+    for n in roster:
+        taken |= _words(n)
+    speaker = _person(raw.get("speaker"), "speaker", taken)
+    addressee = _person(raw.get("addressee"), "addressee", taken)
+    if speaker["kind"] != "companion":
+        raise Refused("only a companion reacts")
+    if speaker["name"].lower() == addressee["name"].lower():
+        raise Refused("one speaker")
+    band = str(raw.get("trust_band") or "")
+    return {"id": xid, "step": 0, "speaker": speaker, "addressee": addressee, "band": band if band in BANDS else "",
+            "transcript": [], "roster": roster, "last": True, "known": None, "react": sort}
+
+
+def reaction_rules(ask, weather="", off_road=False):
+    """The paragraph after her persona. Built from public identity, the fixed sort, and static rules - nothing else."""
+    me, other = ask["speaker"], ask["addressee"]
+    parts = ["Right now you stand beside the traveller you journey with." + (" " + BANDS[ask["band"]] if ask["band"] else ""),
+             f"{_called(other)} was talking with the traveller and, in passing, {REACTIONS[ask['react']]}. That is all you "
+             "caught of it: you did not follow the rest of their talk, and it is not your affair.",
+             f"{other['first']} is ordinary working folk and no enemy of yours: be easy company - friendly, curious or "
+             "lightly wry."]
+    if off_road:
+        parts.append(OFF_THE_ROAD)
+    if weather:
+        parts.append(weather)
+    parts.append(
+        f"Answer {other['first']} with ONE short sentence in your own manner, and no more: this is your only word here, so "
+        "close it naturally and ask nothing. Talk only: you cannot fetch, serve, sell, give or mend anything, so do not "
+        "offer to; promise and arrange nothing. Say nothing of the traveller's affairs, tell no news or gossip, name "
+        "nobody but " + other["first"] + ", and do not guess at what the two of them were speaking of. Do not call "
+        + other["first"] + " a man or a woman.")   # trial 2026-11-11: she guessed it from the name ("for a woman who ...")
+    parts.append('If there is truly nothing natural to say, reply {"say": ""}.')
+    return " ".join(parts)
+
+
+def reaction_record(ask):
+    """The user message of a reaction: no record of speech at all."""
+    return f"Now say your one line to {ask['addressee']['first']}."
+
+
+def one_line(say, limit=160):
+    """Exactly one spoken line of at most `limit` characters: whole if it fits, else cut back to the last full sentence
+    that fits, else to the last whole word."""
+    say = " ".join(str(say or "").split())
+    if len(say) <= limit:
+        return say
+    head = say[:limit + 1]
+    ends = [m.end() for m in re.finditer(r"[.!?](?=\s)", head)]
+    if ends and ends[-1] >= 20:
+        return head[:ends[-1]]
+    return head[:limit].rsplit(" ", 1)[0].rstrip(",;:- ") + "."
+
+
 def _called(p):
     return p["name"] + (f", {p['title']}" if p["title"] else "")
 
@@ -135,7 +226,18 @@ FOLLOW = ("Your line must make plain sense as a reply to those last words, to an
 ON_THREAD = "what the two of you are already talking about"
 
 
-def rules(ask, known="", fresh=(), weather="", follow=False):
+# Rumour step C5 (2026-11-11; the owner's carry-in). MEASURED with the live model, 40 first lines per
+# variant (a trial script and its output): as live 25/40 of her first lines went to the road - 17/20 when the NPC
+# greeted her as someone coming back ("good to see you again"), 8/20 otherwise; her persona's road wording removed 12/40;
+# "the traveller you journey with" reworded 19/40; one plain sentence 0/40. The sentence is the fix; her persona (her
+# story) is left alone. As built (no made-up "you have been in this town a while"), second run c5_r2.out: 20/40 -> 3/40
+# unasked, and she still answered all 10 times an NPC asked her about the road. Companion speaker only; off_road False
+# keeps the paragraph as it was, byte for byte.
+OFF_THE_ROAD = ("Do not bring up the road, your journey or how far you have come yourself - every traveller says that; "
+                "if you are asked about it, answer in a few words.")
+
+
+def rules(ask, known="", fresh=(), weather="", follow=False, off_road=False):
     """The paragraph added after the speaker's persona. Public facts only. `known` (Stage A3): one sentence saying the two
     have chatted before, built by acquaint.sentence from ledger facts - never from anything that was said. `fresh`
     (step 2): up to two everyday subjects the two have not covered (code-chosen labels from topics.json); with none the
@@ -152,6 +254,8 @@ def rules(ask, known="", fresh=(), weather="", follow=False):
     else:
         parts = [f"A traveller stands before you with their travelling companion, {_called(other)}. You are talking with "
                  f"{other['first']} now - not with the traveller, who only stands by and listens."]
+    if off_road and me["kind"] == "companion":
+        parts.append(OFF_THE_ROAD)
     if known:
         parts.append(known)
     if weather:   # one weather for the day, the same for every NPC (weather.py); "" = Stage A2's paragraph

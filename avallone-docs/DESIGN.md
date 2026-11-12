@@ -243,9 +243,13 @@ When a townsperson or the innkeeper has just spoken to your companion by name, t
 - **It cannot run away.** After an exchange the NPC rests for a few minutes, and a set number of ordinary replies must
   pass before the next one. A game master can switch exchanges off in game without a restart.
 - **No word to someone who cannot answer.** When the shard already knows an exchange cannot start (that rest, that count,
-  or another exchange running), it says so in the request, and the NPC speaks about your companion to you, not to her. A
-  greeting to her would hang unanswered. A reply that tells a rumour never starts an exchange either; that is only known
-  once the reply exists, so there an NPC can still remark on her and get no answer.
+  or another exchange running), it says so in the request, and the NPC leaves your companion out of that reply. A greeting
+  to her would hang unanswered. (An earlier version had the NPC remark on her to you instead; in play those remarks came
+  too often.)
+- **One line after gossip.** A reply that tells a rumour never starts an exchange: its words came from a model that had
+  the gossip in front of it. If that reply names your companion she may add a single line of her own. That line is
+  written without anything the NPC said. Her prompt gets only the sort of story it was (a death, a funny tale), so nothing
+  in the gossip can steer what she says, and the line is not remembered as a conversation.
 
 ### Who has talked with whom
 
@@ -289,8 +293,11 @@ healing, work, animals, sea, town, family, rest, clothes, danger, magic, land). 
 Every NPC used to make up its own weather, so three people in one town could disagree. Now a fixed calculation on the
 real-world date picks one description for the day (dry and clear, overcast, windy, light rain and so on, each with how
 warm it is). Nothing is stored and no model is asked. The prompt gives it as a fact to stay consistent with and tells the
-NPC not to bring the weather up. It does not follow the rain and snow the game client shows, and a companion's own
-replies to her owner do not get it yet.
+NPC not to bring the weather up.
+
+Where the game is really showing rain or snow at the NPC's spot, the shard says so in the request, and that replaces or
+narrows the day's description. When the shard does not know, the day's description stands. A companion's own reply to
+her owner gets one short sentence, and only while rain or snow is falling.
 
 ## 6. Memory
 
@@ -502,6 +509,9 @@ flowchart TB
   makes the rumour vanish cleanly along with the deed.
 - **Garbling is deterministic**: the same story is told the same way in the same town, with at most two
   changes, and it never swaps in another player's name.
+- **Only funny stories are garbled.** A death, a murder or a heroic deed is told as it happened, and a player's own
+  death never changes. The settings file says which kinds may change, and the brain refuses to load a file that lets a
+  serious kind drift.
 - **Names are bound safely.** The model never sees a player's name directly in a rumour. It gets a one-time
   token, and the shard puts in the character's *current* name when the line is spoken. A reply that names
   any other real player is refused.
@@ -513,6 +523,57 @@ flowchart TB
 
 **Small talk** fills the gaps: a few hundred invented, gender-neutral local lines, general and per town,
 mixed in for "what's new?" alongside real news. They never name a player. *(Sample lines in this copy.)*
+
+### Told plainly
+
+Whether a reply really told a story decides two things: whether the story counts as heard, and whether its subject may
+correct it (next section). Several attempts to read that out of the model's free wording all failed the same way: there
+was always one more sentence that used the right words and said something else ("I slew a dragon while you were away").
+So nothing is read.
+
+- **The code writes the sentence.** For a real story the brain composes one sentence: an opening ("They say", "I hear",
+  "Word is", "Folk say") and the story exactly as its notes have it, with numbers as words.
+- **The model says it first, then speaks for itself.** The prompt hands over that sentence to be said word for word, and
+  asks for one remark of the NPC's own after it.
+- **Told means the reply begins with that sentence.** Only case, spacing and the kind of full stop may differ. If the
+  reply begins any other way, the brain says the sentence itself and keeps the NPC's opening gesture.
+- **What follows is the NPC's own.** The remark after the sentence is not checked against the story. It can doubt the
+  tale; it cannot change which tale was told.
+- **One story at a time**, and only on a first telling. "Tell me more" is free wording, as before.
+
+### Setting the record straight
+
+When an NPC has just told a player a story about that player, the player's very next line to that NPC may correct it.
+
+- **Details only.** How many, what, or where: values the story already shows. A murder or a death stands as told; the
+  NPC says so.
+- **A plain correction or nothing.** The line must be a short sentence of a known shape ("It was four.", "It was a llama,
+  not a horse.", "That was near Minoc."). Anything else gets an ordinary reply, and the NPC is told not to agree to
+  change the tale.
+- **Closed lists.** The thing must be a known creature and the place a known town or dungeon. Nothing the player typed
+  is stored or passed on: the record holds the story's id and the checked values, and the NPC's accepting line is built
+  from those by code, not by the model.
+- **Checked twice.** The brain offers a correction only for a story that is live, is that player's own and was really
+  told (above). The shard checks the ticket, the character and the values again before it writes the record, and only
+  then lets the NPC accept. At most three per played hour.
+- **It is a fact like any other.** The correction goes into the ledger beside the deed, so a world restore takes it away
+  with everything else. From then on the corrected detail is what every NPC tells, and it no longer changes with travel.
+- **Old and new versions mix safely.** The brain always accepts correction records. The shard sends them only to a brain
+  that has said it understands them, and holds them back otherwise.
+
+### Made-up stories
+
+The invented gossip used to be one random line per reply. Now most of it behaves like news.
+
+- **Stories with a life.** A made-up story is born in a town, travels the same roads as real news, is heard by some
+  NPCs and not others, and expires. Its text and lifetime are kept with its id, so editing the pool later does not
+  change a story already going round.
+- **One draw.** A "what news?" reply makes one weighted draw over the town's real stories, the made-up stories this NPC
+  has heard, and one-off lines. Real stories weigh more, and the asker's own weigh double.
+- **Follow-ups work.** "Tell me more" finds the same story by its id, whatever that NPC's current share of stories is.
+- **Counted as heard only when told.** A made-up story is recognised by its own distinctive words. If the reply does not
+  show it, the brain says it in a fixed wording and counts that.
+- **Never about a player.** Made-up stories name no real person, and cannot be corrected.
 
 ## 13. Companions
 
@@ -585,6 +646,7 @@ Avallónë also tunes the game itself. Each rule is a setting in `AvalloneRules`
 - guards deal with monsters that chase you into town
 - ships can sail through the serpent pillars
 - Treasures of Tokuno on
+- one speech colour for townsfolk and creatures (green) and one for companions and wanderers (yellow), from a single rule
 - Discordance lowers the discorded creature's own defence chance (the stock code lowered its *target's* by mistake), and a guild
   war that runs out tells the winner it won (the stock code told it "draw")
 

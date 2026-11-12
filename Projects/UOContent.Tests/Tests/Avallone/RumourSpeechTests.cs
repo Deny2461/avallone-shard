@@ -424,4 +424,20 @@ public class RumourSpeechTests
         RumourSpeech.ResetForTests(false); // speaking off: the marker leaves the prompt too
         Assert.DoesNotContain(RumourSpeech.History(history), l => l.Text == RumourSpeech.Marker);
     }
+
+    // Rumour step C2 (2026-11-11): the GM listing labels a made-up story; a real one reads exactly as before.
+    [Fact]
+    public void TheGmListingLabelsAMadeUpStory()
+    {
+        using var real = System.Text.Json.JsonDocument.Parse(
+            "{\"town\":\"Britain\",\"text\":\"Racer X slew a dragon near Destard\",\"id\":\"1-7\",\"hops\":2}");
+        Assert.Equal("[Britain] Racer X slew a dragon near Destard (id 1-7, 2 hop(s))", RumourCommands.ListLine(real.RootElement));
+
+        using var made = System.Text.Json.JsonDocument.Parse(
+            "{\"town\":\"Britain\",\"text\":\"a sample piece of town gossip\",\"id\":\"mu-e143f2a7-9e24-o\",\"hops\":3,\"source\":\"made_up\"}");
+        Assert.Equal(
+            "[Britain] a sample piece of town gossip (id mu-e143f2a7-9e24-o, 3 hop(s), made-up)",
+            RumourCommands.ListLine(made.RootElement)
+        );
+    }
 }

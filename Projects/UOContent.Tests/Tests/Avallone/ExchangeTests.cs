@@ -156,6 +156,172 @@ public class ExchangeTests : IDisposable
         return Exchange.Started > before;
     }
 
+    // ---- Rumour step C1 (2026-11-11): her one-line reaction to a gossip reply that names her --------------------------
+    // Names no other test uses: the request also carries the roster of current players (for the reply check), and a
+    // player left over from another test must not look like a leak of this line.
+    private const string Gossip = "They say Zorvald Quenby slew a wyvern near Shame. And you, Elspeth - good day to you.";
+
+    private bool Gossiped(Mobile npc, PlayerMobile p, int? sort, string spoken = Gossip)
+    {
+        var before = Exchange.Started;
+        Exchange.AfterReply(npc, p, TravelParty.For(npc, p), spoken, true, Exchange.RevisionOf(p), sort);   // excluded: a gossip turn
+        return Exchange.Started > before;
+    }
+
+    [Fact]
+    public void AGossipReplyThatNamesHerGetsOneLineAndTheRequestCarriesNothingTheNpcSaid()
+    {
+        Exchange.SetReactionsForTests(true);
+        var p = Player("Wren");
+        var osric = Vendor("Osric");
+        var e = Companion(p);
+
+        Assert.True(Gossiped(osric, p, 3));
+
+        Assert.Equal(1, Said);                                   // exactly one line, hers
+        Assert.Same(e, _said[0].Who);
+        Assert.False(Exchange.Running);
+        Assert.Equal((1, 1, 1, "complete"), (Exchange.Started, Exchange.ReactionsStarted, Exchange.Completed, Exchange.LastEnd));
+        var r = Assert.Single(_client.Steps);
+        Assert.Equal("exchange", r.Mode);
+        Assert.Equal(3, r.Exchange.React);
+        Assert.Empty(r.Exchange.Transcript);                     // not one word of the NPC's reply
+        Assert.Null(r.Exchange.Known);                           // no memory read either
+        Assert.True(r.Exchange.Last);
+        Assert.Equal(0, r.Exchange.Step);
+        Assert.Equal("companion", r.Exchange.Speaker.Kind);
+        Assert.Equal("", r.Utterance);
+        Assert.Empty(r.History);
+        Assert.Null(r.Situation);
+        Assert.Null(r.Rumours);
+        Assert.Null(r.Party);
+        var wire = SidecarAiClient.BodyJson(r, TimeSpan.FromSeconds(6));      // what really goes to the brain
+        foreach (var word in new[] { "Zorvald", "Quenby", "wyvern", "Shame", "slew", "good day" })
+        {
+            Assert.DoesNotContain(word, wire);
+        }
+
+        Assert.Contains("\"react\":3", wire);
+        Assert.Contains("\"transcript\":[]", wire);
+    }
+
+    [Fact]
+    public void ControlAnOrdinaryExchangeDoesCarryTheNpcsLineAndNoReactField()
+    {
+        Exchange.SetReactionsForTests(true);
+        var p = Player("Wren");
+        var osric = Vendor("Osric");
+        Companion(p);
+
+        Assert.True(Reply(osric, p));
+        var wire = SidecarAiClient.BodyJson(_client.Steps[0], TimeSpan.FromSeconds(6));
+        Assert.Contains("road-weary", wire);                     // the check above would see the words if they were sent
+        Assert.DoesNotContain("\"react\"", wire);                // and an ordinary step is the request an old brain knows
+        Assert.Null(_client.Steps[0].Exchange.React);
+    }
+
+    [Fact]
+    public void NoReactionWithTheSwitchOffOrWithoutASortOrWhenSheIsNotNamed()
+    {
+        var p = Player("Wren");
+        var osric = Vendor("Osric");
+        Companion(p);
+
+        Assert.False(Gossiped(osric, p, 3));                     // switch off: a gossip reply is followed by silence, as before
+        Exchange.SetReactionsForTests(true);
+        Assert.False(Gossiped(osric, p, null));                  // the brain gave no sort
+        Assert.False(Gossiped(osric, p, 6));                     // not one of the six
+        Assert.False(Gossiped(osric, p, -1));
+        Assert.False(Gossiped(osric, p, 2, "They say Zorvald Quenby slew a wyvern near Shame."));   // the line does not name her
+        Assert.Equal(0, Said);
+        Assert.Empty(_client.Steps);
+    }
+
+    [Fact]
+    public void OnlyAGossipTurnPassesTheSortOn()
+    {
+        var gossip = AiReply.Success("x", "t") with { Rumour = new RumourInfo("", "", "", ["1-1"], "news"), ReactSort = 4 };
+        Assert.Equal(4, Exchange.ReactSortOf(gossip));
+        Assert.Null(Exchange.ReactSortOf(gossip with { Kind = "decency" }));
+        Assert.Null(Exchange.ReactSortOf(gossip with { Kind = "shop" }));
+        Assert.Null(Exchange.ReactSortOf(gossip with { Conduct = "hateful_language" }));
+        Assert.Null(Exchange.ReactSortOf(AiReply.Success("x", "t") with { ReactSort = 4 }));       // no gossip: an ordinary exchange instead
+        Assert.Null(Exchange.ReactSortOf(gossip with { ReactSort = null }));
+    }
+
+    [Fact]
+    public void AReactionIsNeverExtendedAndNeverRecordedAsATalk()
+    {
+        Exchange.SetReactionsForTests(true);
+        Exchange.SetMemoryForTests(true);
+        var recorded = 0;
+        Exchange.Recorder = (_, _, _, _) =>
+        {
+            recorded++;
+            return true;
+        };
+        _client.Answer = _ => AiReply.Success("And how is the tanning trade, Osric?", "test") with { Topics = ["trade"] };
+        var p = Player("Wren");
+        var osric = Vendor("Osric");
+        Companion(p);
+
+        Assert.True(Gossiped(osric, p, 1));
+
+        Assert.Equal(1, Said);                                   // a question, and still nobody is given a second line
+        Assert.Single(_client.Steps);
+        Assert.Equal(0, recorded);                               // not a "talked with" fact, and no subjects
+        Assert.Equal(0, Exchange.TalksRecorded);
+    }
+
+    [Fact]
+    public void AReactionObeysTheSpacingAndThePlayersWords()
+    {
+        Exchange.SetReactionsForTests(true);
+        var p = Player("Wren");
+        var osric = Vendor("Osric");
+        Companion(p);
+
+        Assert.True(Gossiped(osric, p, 0));
+        Assert.False(Gossiped(osric, p, 0));                     // straight after: the replies-between rule holds
+        Assert.Equal(1, Said);
+
+        Exchange.ResetForTests(true);
+        Exchange.SetReactionsForTests(true);
+        Exchange.Pause = _ => Task.CompletedTask;
+        Exchange.Speak = (m, t) =>
+        {
+            lock (_said)
+            {
+                _said.Add((m, t));
+            }
+        };
+        Exchange.Online = _ => true;
+        _client.Hold = new TaskCompletionSource<AiReply>();      // her call is out ...
+        Assert.True(Gossiped(osric, p, 0));
+        Exchange.OnSpeech(Line(p, "all follow me"));             // ... and the player speaks
+        Assert.False(Exchange.Running);
+        _client.Hold.TrySetResult(AiReply.Success("Too late.", "test"));
+        Assert.Equal(1, Said);                                   // the late line is never said
+    }
+
+    [Theory]
+    [InlineData("{\"sort\":0}", 0)]
+    [InlineData("{\"sort\":5}", 5)]
+    [InlineData("{\"sort\":6}", null)]
+    [InlineData("{\"sort\":-1}", null)]
+    [InlineData("{\"sort\":\"2\"}", null)]
+    [InlineData("{\"sort\":1.5}", null)]
+    [InlineData("{\"text\":\"what the NPC said\"}", null)]
+    [InlineData("3", null)]
+    [InlineData("null", null)]
+    [InlineData("[1]", null)]
+    public void OnlyANumberFromZeroToFiveIsTakenFromTheBrain(string json, int? want)
+    {
+        using var doc = System.Text.Json.JsonDocument.Parse(json);
+        Assert.Equal(want, SidecarAiClient.CleanReact(doc.RootElement));
+        Assert.Null(SidecarAiClient.CleanReact(null));
+    }
+
     private int Said
     {
         get

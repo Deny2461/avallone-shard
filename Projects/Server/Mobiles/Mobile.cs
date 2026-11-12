@@ -1360,8 +1360,20 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         set => m_Language = value;
     }
 
+    // Avallone (speech colours, the owner 2026-11-11): one rule may choose the colour every NON-player mobile speaks in. The hue
+    // set on the mobile stays stored and saved untouched (StoredSpeechHue), so with no rule set this is the stock property.
+    public static Func<Mobile, int, int> NpcSpeechHueRule { get; set; }
+
+    private int m_SpeechHue;
+
     [CommandProperty(AccessLevel.GameMaster)]
-    public int SpeechHue { get; set; }
+    public int SpeechHue
+    {
+        get => !m_Player && NpcSpeechHueRule != null ? NpcSpeechHueRule(this, m_SpeechHue) : m_SpeechHue;
+        set => m_SpeechHue = value;
+    }
+
+    public int StoredSpeechHue => m_SpeechHue;
 
     [CommandProperty(AccessLevel.GameMaster)]
     public int EmoteHue { get; set; }
@@ -2421,7 +2433,7 @@ public partial class Mobile : IHued, IComparable<Mobile>, ISpawnable, IObjectPro
         writer.Write(m_GuildTitle);
         writer.Write(m_Criminal);
         writer.Write(m_Kills);
-        writer.Write(SpeechHue);
+        writer.Write(m_SpeechHue); // the stored hue, never a colour the Avallone rule chose
         writer.Write(EmoteHue);
         writer.Write(WhisperHue);
         writer.Write(YellHue);

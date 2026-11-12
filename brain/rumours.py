@@ -12,6 +12,9 @@ Bounded (Codex code review 2026-10-28 finding 2): rumours read only deeds from t
 an index; heroic nicknames are counted by SQLite, not by replaying every deed in Python.
 Rules (the owner, chat, 2026-10-28): mild garbling - numbers grow, places drift, names get vaguer; NEVER a different
 player's name and never an invented deed. Public deeds only - the shard never sends anything else.
+Rumour step, Part B (the owner, chat, 2026-11-11;): a story may
+change in the telling ONLY if its deed type is flagged funny AND is not a player's own death. _load() refuses a
+settings file that says otherwise - the rule lives in code, the file cannot talk its way round it.
 """
 import hashlib
 import heapq
@@ -19,8 +22,16 @@ import json
 import os
 import re
 
+import corrections
+
 WORLD_ID = "a7a110e0-0000-4000-8000-000000000001"
 DISTORTIONS = ("count_up", "place_drift", "name_vague")
+PLAYER_DEATHS = ("died_notable", "died_pathetic")   # a player's own death is never changed in the telling, funny or not
+
+
+def may_distort(name, spec):
+    """Part B: only a funny deed type that is not a player's own death may carry a distort list."""
+    return spec.get("funny") is True and name not in PLAYER_DEATHS
 
 
 def _h(*parts):
@@ -54,6 +65,13 @@ class Rumours:
         self._mtime = None
         self.cfg = None
         self._load()
+        # Rumour step, Part A: the closed lists a correction may use, and whether corrected wordings are shown at all
+        # (brain setting rumour_corrections_shown; off = every story reads as its deeds say, records untouched).
+        try:
+            self.lists, self.lists_error = corrections.Lists(corrections.default_path(), towns=self.cfg["towns"]), None
+        except Exception as e:   # a bad list file costs the corrections, never the rumours
+            self.lists, self.lists_error = None, f"{type(e).__name__}: {e}"
+        self.show_corrections = True
         with ledger.lock:
             ledger.db.execute("CREATE TABLE IF NOT EXISTS rumour_drops (id TEXT PRIMARY KEY, at_utc TEXT NOT NULL)")
             ledger.db.execute("""CREATE TABLE IF NOT EXISTS rumour_arrivals (
@@ -61,6 +79,8 @@ class Rumours:
             ledger.db.execute("""CREATE INDEX IF NOT EXISTS events_deed_pt
                                    ON events (npc_id, json_extract(facts, '$.pt')) WHERE kind = 'deed'""")
             ledger.db.execute("CREATE INDEX IF NOT EXISTS rumour_arrivals_pt ON rumour_arrivals (pt)")
+            ledger.db.execute("""CREATE INDEX IF NOT EXISTS events_corrected_story
+                                   ON events (json_extract(facts, '$.story')) WHERE kind = 'rumour_corrected'""")
 
     # ---- config ----
     def _load(self):
@@ -78,6 +98,9 @@ class Rumours:
                 for k in d.get("distort", []):
                     if k not in DISTORTIONS:
                         raise ValueError(f"deed {name}: unknown distortion {k}")
+                if d.get("distort") and not may_distort(name, d):
+                    raise ValueError(f"deed {name}: only a funny story that is not a player's death may change in the "
+                                     f"telling - its distort list must be empty")
             cfg["_graph"] = graph
             longest = max(float(d.get("lifetime_h", 24)) + float(d.get("window_h", 0)) for d in cfg["deeds"].values())
             if float(cfg.get("horizon_h", 168)) < 2 * longest:
@@ -147,6 +170,58 @@ class Rumours:
             open_by_key[key] = g
         return groups
 
+    # ---- Part A: a player's corrections to a story about themselves ----
+    def _fix(self, groups):
+        """Sets g["fix"] = {field: value} on every story its own player corrected. Read rules (design 3.5): only live
+        correction rows, only on a story whose id is one of these live groups, only from the character the story is
+        about, only details that kind of story shows and values still on the closed lists; per detail the LATEST live
+        correction wins. The deeds themselves are never touched: respect, nicknames, origin, lifetime and spread go on
+        reading them."""
+        if not self.show_corrections or not groups or self.lists is None:
+            return groups
+        by_id = {g["id"]: g for g in groups if corrections.fields_for(g["type"])}
+        ids = list(by_id)
+        for i in range(0, len(ids), 200):
+            part = ids[i:i + 200]
+            with self.ledger.rlock:
+                rows = self.ledger.rdb.execute(
+                    f"""SELECT json_extract(facts, '$.story'), char_id, facts FROM events
+                        WHERE kind = 'rumour_corrected' AND json_extract(facts, '$.story') IN ({",".join("?" * len(part))})
+                          AND npc_id = ? AND status = 'live' ORDER BY epoch, seq""", (*part, WORLD_ID)).fetchall()
+            for story, char, facts in rows:
+                g = by_id.get(story)
+                if g is None or not g["char"] or char != g["char"]:
+                    continue   # not the story's own character: never applied
+                try:
+                    changes = corrections.changes_of(json.loads(facts), g["type"], self.lists)
+                except (TypeError, ValueError):
+                    continue
+                if changes:
+                    g.setdefault("fix", {}).update(changes)
+        return groups
+
+    def shown(self, g):
+        """What the story says now, detail by detail (with its corrections): {count, thing, place}."""
+        fix, f = g.get("fix") or {}, g["facts"]
+        return {"count": fix.get("count", g["count"]), "thing": fix.get("thing", str(f.get("subject", ""))),
+                "place": fix.get("place", f.get("place") or g["origin"])}
+
+    def story(self, pt, story_id):
+        """The live story with this id at played second `pt` (with its corrections), or None: unknown, dropped by a
+        GM, faded, or its first deed rolled back. A story's id is its first deed's id - if that changes, this is None
+        and a correction to the old id simply lapses."""
+        self._load()
+        pt = int(pt)
+        dropped = self._dropped()
+        for g in self._fix(self._group(self._deeds(pt))):
+            if g["id"] != story_id:
+                continue
+            spec = self.cfg["deeds"][g["type"]]
+            if g["id"] in dropped or pt >= g["last_pt"] + int(float(spec.get("lifetime_h", 24)) * 3600):
+                return None
+            return g
+        return None
+
     def _spread(self, g):
         """Played-hour arrival time and path for every town the rumour can reach (Dijkstra; each edge's delay is
         jittered +-25% per rumour, deterministically)."""
@@ -177,7 +252,7 @@ class Rumours:
         """Which garbles have crept in by the time the story walked `path`. Mild: at most max_distortions, chosen
         per hop from the deed type's allowed list. Never touches anything but count, place and the name's detail."""
         spec = self.cfg["deeds"][g["type"]]
-        allowed = list(spec.get("distort", []))
+        allowed = list(spec.get("distort", [])) if may_distort(g["type"], spec) else []   # belt and braces behind _load
         chance = float(self.cfg.get("distort_chance", 0.35))
         cap = int(self.cfg.get("max_distortions", 2))
         out = []
@@ -190,10 +265,14 @@ class Rumours:
                     out.append(k)
         return out
 
-    def render(self, g, garbles, town=None, who=None):
+    def render(self, g, garbles, town=None, who=None, raw=False):
+        """`raw` = the wording without the player's corrections (the GM list shows both)."""
         f, spec = g["facts"], self.cfg["deeds"][g["type"]]
-        count = g["count"]
-        if "count_up" in garbles:
+        fix = {} if raw else (g.get("fix") or {})   # Part A: a corrected detail is said as corrected - and no longer
+        count = g["count"]                          # changes with travel
+        if "count" in fix:
+            count = fix["count"]
+        elif "count_up" in garbles:
             count = count + 1
         if who is None:
             who = f.get("who", "") or "someone"
@@ -201,10 +280,13 @@ class Rumours:
             who = f.get("descriptor") or "an adventurer"
         place = f.get("place") or g["origin"]
         near_place = "near " + place
-        if "place_drift" in garbles and self.on_mapped_world(f):
+        if "place" in fix:
+            place = fix["place"]
+            near_place = "near " + place
+        elif "place_drift" in garbles and self.on_mapped_world(f):
             place = g["origin"]
             near_place = "somewhere around " + g["origin"]
-        subject = str(f.get("subject", ""))
+        subject = fix.get("thing") or str(f.get("subject", ""))
         other = str(f.get("other", ""))
         if count > 1 and subject and not subject[:1].isupper():
             a_subject = f"{'many' if count > 4 else count} {_plural(subject, count)}"
@@ -232,7 +314,7 @@ class Rumours:
         pt = int(pt)
         dropped = self._dropped()
         per_town = {}
-        for g in self._group(self._deeds(pt)):
+        for g in self._fix(self._group(self._deeds(pt))):
             if g["id"] in dropped:
                 continue
             spec = self.cfg["deeds"][g["type"]]
@@ -266,7 +348,9 @@ class Rumours:
         """Live rumours at played second `pt`, per town: [{town, id, type, text, hops, arrived_pt, funny, char}]."""
         return [{"town": t, "id": g["id"], "type": g["type"], "char": g["char"], "hops": hops, "arrived_pt": arrive,
                  "funny": bool(self.cfg["deeds"][g["type"]].get("funny")), "garbles": garbles,
-                 "text": self.render(g, garbles, t), "events": len(g["events"])}
+                 "text": self.render(g, garbles, t), "events": len(g["events"]),
+                 # Part A: a corrected story shows both versions to a GM
+                 **({"corrected": dict(g["fix"]), "was": self.render(g, garbles, t, raw=True)} if g.get("fix") else {})}
                 for t, g, garbles, arrive, hops in self._town_rows(pt, town)]
 
     def resolve_town(self, name):

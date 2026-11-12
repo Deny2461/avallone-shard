@@ -2543,7 +2543,7 @@ namespace Server.Mobiles
             {
                 Direction = GetDirectionTo(from);
 
-                var oldSpeechHue = SpeechHue;
+                var oldSpeechHue = StoredSpeechHue; // Avallone: the stored hue, not one the speech-colour rule chose
 
                 SpeechHue = 0x23F;
                 SayTo(from, "Thou art giving me gold?");

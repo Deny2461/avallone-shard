@@ -1406,7 +1406,7 @@ namespace Server.Mobiles
                 }
                 else
                 {
-                    var oldSpeechHue = vendor.SpeechHue;
+                    var oldSpeechHue = vendor.StoredSpeechHue; // Avallone: the stored hue, not one the rule chose
                     vendor.SpeechHue = 0x3B2;
 
                     if (Core.SE)

@@ -56,6 +56,19 @@ public sealed record StandingAsk(int Karma, int Fame, int Hour, string Moon, str
     public long Epoch { get; init; }
 }
 
+// Rumour step, Part A (a player corrects a story about themselves; Rumours/Corrections.cs).
+// CorrectionAsk rides on the ONE request that uses up a correction ticket: the story the NPC just told this player, its
+// deed kind, the details that kind shows (empty = a murder or a death: the tale stands), the played clock, and the
+// roster of real player names for the brain's own check of its lines (never put in a prompt).
+public sealed record CorrectionAsk(string Story, string Type, string[] Fields, long Pt, RumourRosterEntry[] Roster);
+
+// On a reply that really told exactly one story about the player it was said to: that story's id and deed kind.
+public sealed record CorrectableStory(string Id, string Type);
+
+// The brain's CANDIDATE correction and the line that accepts it. The ordinary reply text stays the neutral line; this
+// is spoken instead only after the shard has checked everything again and the record is in its saved outbox.
+public sealed record CorrectionOffer(string Story, int? Count, string Thing, string Place, string Accept);
+
 // What the brain offered: the one sentinel (or empty), whose character id, the descriptor if they are gone, rumour ids.
 public sealed record RumourInfo(string Sentinel, string CharId, string Descriptor, string[] Ids, string Mode);
 
@@ -78,7 +91,11 @@ public sealed record ExchangeAsk(
     string Id, int Step, ExchangeVoice Speaker, ExchangeVoice Addressee, string TrustBand, ExchangeLine[] Transcript, string[] Roster,
     bool Last = false,  // this step is the exchange's closing line (its length is drawn per exchange)
     // Stage A3: null = the NPC-memory switch is off (no read is made); then it is left out of the request entirely
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KnownAsk Known = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] KnownAsk Known = null,
+    // Rumour step C1: set only on a companion's one-line REACTION (0..5 = which fixed sort of remark the NPC was asked to
+    // make to her). Such a step carries an EMPTY transcript: nothing the NPC said is sent. Null = an ordinary step; the
+    // field is then left out, so an older brain sees exactly the request it always saw.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? React = null
 );
 
 // One line of a conversation, oldest first. Speaker is "player" or "npc".
@@ -140,6 +157,13 @@ public sealed record AiRequest(
     // Stage A2: set only on an exchange step (Mode "exchange"); everything private above stays unset on such a request.
     public ExchangeAsk Exchange { get; init; }
 
+    // Rumour step C3: what the game shows falling where this NPC stands - "dry", "rain" or "snow" (RealWeather.Word);
+    // null = unknown. The brain uses it only with its real_weather setting on; an older brain ignores the field.
+    public string Falling { get; init; }
+
+    // Rumour step, Part A: set only on the one line that uses up a correction ticket; null = the request is unchanged.
+    public CorrectionAsk Correction { get; init; }
+
     // One conversation lease per NPC + subject: a second request while one is pending is refused.
     public string LeaseKey => $"{NpcId:N}:{SubjectId:N}";
 }
@@ -166,6 +190,14 @@ public readonly record struct AiReply(AiOutcome Outcome, string Text, string Mod
     // Stage A3 step 2: on an exchange step, the brain's CANDIDATE subjects for the lines said so far plus this one.
     // null = no classification offered; empty = classified, nothing matched. Kept only if the line is really spoken.
     public string[] Topics { get; init; }
+
+    // Rumour step C1: on a reply that had gossip in its prompt, 0..5 = the fixed sort of remark the brain had asked this
+    // NPC to make to the companion (chosen before the reply was written). Null = none. Never any text.
+    public int? ReactSort { get; init; }
+
+    // Rumour step, Part A: see CorrectableStory / CorrectionOffer. Both null on every ordinary reply and from an older brain.
+    public CorrectableStory Correctable { get; init; }
+    public CorrectionOffer Correction { get; init; }
 
     public static AiReply Success(string text, string model) => new(AiOutcome.Ok, text, model, 0, null);
 

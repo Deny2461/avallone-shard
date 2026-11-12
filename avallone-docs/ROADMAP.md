@@ -79,7 +79,7 @@ toward NPCs who "do their own thing".
 | 5c-2 · stage A2 | Your companion and an NPC trade a few lines (a shared two-speaker engine, later reused for villagers talking to each other) | ✅ |
 | 5c-2 · stage A3 | NPCs remember who they have talked with (step 1: that they met; step 2: which broad subjects, so they vary what they talk about) | ✅ |
 | 5c-2 · promise guard | A stronger guard that spots a claimed promise and rewrites a reply that gives in | ⏸️ |
-| 5c-2 · 2d | Rumours that drift, get corrected, and carry how sure the teller is | 📐 |
+| 5c-2 · 2d | **The rumour step:** a player can correct a story about themselves; serious stories no longer drift; real stories open with one plain sentence; made-up gossip travels as stories; the companion adds a line after gossip; weather follows the game's rain and snow; speech colours ("how sure the teller is" was dropped) | ✅ |
 | 5c-2 · 2e | Rumours on the same memory model, plus a town-wide reputation | 📐 |
 | 5c-2 · rest | More named characters in town, with their own placement file | 📐 |
 | 5c-3 | Six new named NPCs | 📐 |

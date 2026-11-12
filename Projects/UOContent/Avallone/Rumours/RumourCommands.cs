@@ -175,7 +175,7 @@ public static class RumourCommands
         return doc;
     }
 
-    [Usage("Rumour [status|on|off|speak [on|off]|clock [add <hours>]|list [town]|fire <type> [subject]|plant <town> <text>|drop <id>]")]
+    [Usage("Rumour [status|on|off|speak [on|off]|corrections [on|off]|clock [add <hours>]|list [town]|fire <type> [subject]|plant <town> <text>|drop <id>]")]
     [Description("Avallone 5a: the rumour network. list asks the brain what each town has heard now (played clock).")]
     // "[unease=<-1..1>] text" -> (value, text, error). Two decimals at most; anything else is an error, never silently 0.
     internal static (double Value, string Text, string Error) PlantUnease(string text)
@@ -261,6 +261,16 @@ public static class RumourCommands
 
                 from.SendMessage($"Townsfolk gossip: {RumourSpeech.Describe()} (saved).");
                 break;
+            case "corrections":
+                // Rumour step, Part A. Off = no new ticket, every ticket forgotten, and a correction still on its way back
+                // from the brain is refused. It does NOT undo corrections already recorded.
+                if (e.Length >= 2 && e.GetString(1).ToLowerInvariant() is "on" or "off")
+                {
+                    Corrections.SetTaking(e.GetString(1).ToLowerInvariant() == "on");
+                }
+
+                from.SendMessage($"Rumour {Corrections.DescribeState()} (saved).");
+                break;
             case "clock":
                 if (e.Length >= 3 && e.GetString(1).ToLowerInvariant() == "add")
                 {
@@ -327,9 +337,21 @@ public static class RumourCommands
                 from.SendMessage(
                     $"Deeds {(Deeds.Enabled ? "ON" : "OFF")}; gossip {(RumourSpeech.Enabled ? "ON" : "OFF")}; played clock {PlayedClock.Hours:F2} h; ledger: {AiLedger.Describe()}"
                 );
+                from.SendMessage($"Rumour {Corrections.DescribeState()}.");
                 break;
         }
     }
+
+    // One line of [Rumour list. Rumour step C2: a made-up story (the brain marks it with "source") is labelled, so a GM
+    // can tell it from a player's deed at a glance. A town's made-up stories are listed only when a town is given.
+    internal static string ListLine(JsonElement r) =>
+        $"[{r.GetProperty("town").GetString()}] {r.GetProperty("text").GetString()} " +
+        $"(id {r.GetProperty("id").GetString()}, {r.GetProperty("hops").GetInt32()} hop(s)" +
+        (r.TryGetProperty("source", out var source) && source.ValueKind == JsonValueKind.String &&
+         source.GetString() == "made_up" ? ", made-up)" : ")") +
+        // Part A: a story its own player corrected shows both versions (the brain sends the uncorrected wording as "was").
+        (r.TryGetProperty("was", out var was) && was.ValueKind == JsonValueKind.String
+            ? $" - CORRECTED by its player; before: {was.GetString()}" : "");
 
     private static async Task ListAsync(Mobile from, string town)
     {
@@ -341,10 +363,7 @@ public static class RumourCommands
             foreach (var r in doc.RootElement.GetProperty("rumours").EnumerateArray())
             {
                 n++;
-                from.SendMessage(
-                    $"[{r.GetProperty("town").GetString()}] {r.GetProperty("text").GetString()} " +
-                    $"(id {r.GetProperty("id").GetString()}, {r.GetProperty("hops").GetInt32()} hop(s))"
-                );
+                from.SendMessage(ListLine(r));
             }
 
             from.SendMessage(n == 0 ? "No live rumours." : $"{n} live rumour(s) at {PlayedClock.Hours:F2} h.");

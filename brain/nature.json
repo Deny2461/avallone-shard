@@ -538,6 +538,12 @@
    "lean": "cloud"
   }
  ],
+ "_flourishes": "Rumour step C4 (2026-11-11, the owner's carry-in: the overused line). A habit with manner true is in every prompt. Every other habit is a flourish: its sentence is in a turn's prompt only for of turns (the habit's own share wins) and never on two turns running in one conversation; gap_s = how long a silence makes it a new conversation. enabled false = every habit in every prompt, as before this step.",
+ "flourishes": {
+  "enabled": true,
+  "share": 0.5,
+  "gap_s": 600
+ },
  "habits": [
   {
    "key": "sayings",
@@ -549,6 +555,7 @@
   },
   {
    "key": "pet_name",
+   "manner": true,
    "line": "You call the traveller \"{pet}\" - never man, woman, lad or lass."
   },
   {
@@ -569,6 +576,7 @@
   },
   {
    "key": "slow",
+   "manner": true,
    "line": "You speak slowly, with pauses (...)."
   },
   {
@@ -601,6 +609,7 @@
   },
   {
    "key": "years",
+   "share": 0.25,
    "line": "You mention how many years you have lived or worked here."
   },
   {
@@ -617,6 +626,7 @@
   },
   {
    "key": "no_names",
+   "manner": true,
    "line": "You never use anyone's name; just \"you\"."
   }
  ],

@@ -558,29 +558,119 @@ class SpeechTests(unittest.TestCase):
         self.assertIn("call the person you are talking to", o.block)
 
 
-    # ---- dev play test 2026-10-29: offered is not told ----
-    def test_only_told_rumours_count(self):
-        rid = self.deed("fished_boots", 0, subject="old boots", count=3, descriptor="a fisher")
-        o = self.offer(speaker=WREN)
-        self.assertEqual(rs.used("They say the Crown will tax Tokuno tea.", o), [])
-        self.assertEqual(rs.used("I hear you pulled three old boots from the water!", o), [rid])
-        self.assertEqual(rs.used("Fishing again, are you?", o), [rid])          # "fish" stem of the deed text
-        dr = self.deed("drunk", 5, char=ALT, who="Brynn Handy", subject="", place="Britain")
+    # ---- offered is not told (dev play test 2026-10-29). Plain telling (Codex code R2-R5, RUM-C3 B): for a real story
+    # ---- the CODE writes the sentence; told = the reply begins with exactly that sentence. Nothing is read. ----
+    def pick(self, rid, speaker, **kw):
         import random as _r
-        o = next(x for x in (rs.select(self.r, H, "Britain", ALT, "news", roster=ROSTER, rng=_r.Random(i))
-                             for i in range(100)) if dr in x.ids)
-        self.assertIn(dr, rs.used("That one was seen quite intoxicated.", o))   # told_words
-        d = self.deed("kill_notable", 10, char=WREN, subject="dragon")
-        import random as _r
-        o = next(x for x in (rs.select(self.r, H, "Britain", WREN, "news", roster=ROSTER, rng=_r.Random(i))
-                             for i in range(100)) if d in x.ids)
-        self.assertIn(d, rs.used("You felled that beast near Destard!", o))      # the place counts too
+        return next(x for x in (rs.select(self.r, H, "Britain", speaker, "news", roster=ROSTER, rng=_r.Random(i), **kw)
+                                for i in range(300)) if rid in x.ids)
 
-    def test_sentinel_counts_as_told(self):
+    def own(self, typ, **facts):
+        """A fresh ledger with ONE story about WREN; the offer for "what do folk say of me", plain telling on."""
+        self.tearDown()
+        self.setUp()
+        rid = self.deed(typ, 0, char=WREN, **facts)
+        import random as _r
+        return rid, rs.select(self.r, H, "Britain", WREN, "about", about=WREN, roster=ROSTER, rng=_r.Random(7), plain=True)
+
+    def test_the_code_writes_the_sentence_for_every_kind_of_story(self):
+        for typ, facts, tail in (
+                ("kill_notable", {"subject": "dragon", "count": 3}, "you slew three dragons near Destard"),
+                ("kill_notable", {"subject": "dragon"}, "you slew a dragon near Destard"),
+                ("kill_notable", {"subject": "dragon", "count": 40}, "you slew many dragons near Destard"),
+                ("tame_notable", {"subject": "dragon"}, "you tamed a dragon near Destard"),
+                ("died_notable", {"subject": "dragon"}, "you were killed by a dragon near Destard"),
+                ("died_pathetic", {"subject": "rabbit"}, "you were done in by a rabbit near Destard"),
+                ("murder", {"subject": ""}, "you murdered an innocent near Destard"),
+                ("drunk", {"subject": ""}, "you were roaring drunk near Destard"),
+                ("fished_boots", {"subject": "old boots", "count": 40}, "you fished up forty old boots in one sitting"),
+                ("fished_bottle", {"subject": ""}, "you pulled a message in a bottle out of the sea"),
+                ("pet_died", {"subject": "horse", "count": 3}, "your horse has gone to the healers three times"),
+                ("pet_died", {"subject": "horse", "count": 2}, "your horse has gone to the healers twice"),
+                ("returned", {"subject": ""}, "you are back after a long time away - folk thought the wolves had you"),
+                ("tame_failstreak", {"subject": "dragon"},
+                 "you spent an age sweet-talking a dragon near Destard, and it would have none of it"),
+                ("provoked", {"subject": "dragon", "other": "troll"}, "you played a tune that set a dragon against a troll near Destard"),
+                ("pacified", {"subject": "dragon"}, "you calmed a dragon with nothing but music near Destard")):
+            rid, o = self.own(typ, **facts)
+            self.assertEqual(o.ids, [rid], typ)
+            self.assertIn(o.said[rid], [f"{opening} {tail}." for opening in rs.PLAIN_OPENINGS], typ)
+            self.assertIn(rs.PLAIN_LINE.format(sentence=o.said[rid]), o.block, typ)     # the model is handed that sentence
+            self.assertNotIn(rs.OWN_WORDS, o.block, typ)
+            self.assertEqual(rs.used(o.said[rid] + " Fancy that.", o), [rid], typ)
+
+    def test_told_means_the_reply_begins_with_exactly_that_sentence(self):
+        rid, o = self.own("kill_notable", subject="dragon", count=3)
+        said = o.said[rid]
+        opening = said.split(" you ")[0]
+        for reply in (said, said + " A fine thing, that.", "[leans in] " + said + " Ha!", said.upper(),
+                      said[:-1] + "! Truly.", said[:-1] + "... so the talk goes.", "  " + said.replace(" ", "  "),
+                      said + " I do not believe a word of it."):                      # doubt AFTER the telling: still told
+            self.assertEqual(rs.used(reply, o), [rid], reply)
+        for reply in (
+                "They say the Crown will tax Tokuno tea.", "Dragons have fine scales, friend.",              # Codex R2
+                "I slew a dragon while you were away.", "You know, I killed a dragon once.",                 # Codex R3
+                "A dragon slew you near Destard.", "Did you slay a dragon near Destard?",
+                "They say you slew a troll and a knight took a dragon.", "You slew my hopes of a dragon.",   # Codex R4
+                "Imagine: " + said, "Imagine. " + said,
+                f"{opening} you slew three dragonflies near Destard.",                                       # Codex R5
+                "A dragon was slain in effigy by you near Destard.",
+                "You slew three dragons near Destard.",                 # true, but not the sentence the code wrote
+                "They say you slew three dragons.", said[:-1] + " in a play.", said[:-1] + "?", said[:-1] + ", or so you claim.",
+                said[:-1] + "flies.", said.replace("three", "four"), said.replace("slew", "saw"),
+                "It is not true. " + said, "[one] [two] " + said, "Well, " + said, "They say that " + said.split(" ", 2)[2]):
+            self.assertEqual(rs.used(reply, o), [], reply)
+
+    def test_without_plain_telling_nothing_is_strictly_told(self):
+        d = self.deed("kill_notable", 10, char=WREN, subject="dragon")
+        o = self.pick(d, WREN)
+        self.assertEqual(o.said, {})
+        self.assertIn(rs.OWN_WORDS, o.block)                                     # the prompt as it always was
+        self.assertNotIn("word for word", o.block)
+        for reply in ("They say you slew a dragon near Destard.", "Dragons have fine scales, friend."):
+            self.assertEqual(rs.used(reply, o), [], reply)                       # strict (the default): never
+            self.assertEqual(rs.used(reply, o, strict=False), [d], reply)        # as live reads it: one key word
+        self.assertEqual(rs.used("Nothing much happens here.", o, strict=False), [])
+
+    def test_another_players_story_is_said_with_the_name_slot(self):
         rid = self.deed("kill_notable", 0, char=ALT, who="Brynn Handy")
-        o = self.offer(speaker=WREN)
-        self.assertEqual(rs.used(f"{o.sentinel} did a great thing.", o), [rid])
-        self.assertEqual(rs.used("Nothing much happens here.", o), [])
+        o = self.pick(rid, WREN, plain=True)
+        self.assertTrue(o.sentinel)
+        self.assertIn(o.said[rid], [f"{opening} {o.sentinel} slew a dragon near Destard." for opening in rs.PLAIN_OPENINGS])
+        self.assertEqual(rs.used(o.said[rid] + " A bold one, that.", o), [rid])
+        for reply in (f"{o.sentinel} did a great thing.", f"A dragon slew {o.sentinel} near Destard.", "Someone slew a dragon.",
+                      f"They say {o.sentinel} slew a dragonfly near Destard."):
+            self.assertEqual(rs.used(reply, o), [], reply)
+        self.assertEqual(rs.used(f"{o.sentinel} did a great thing.", o, strict=False), [rid])   # live: the name slot alone
+
+    def test_plain_telling_is_one_story_a_first_telling_and_never_a_question(self):
+        import random as _r
+        a = self.deed("kill_notable", 10, char=WREN, subject="dragon", count=3)
+        self.deed("drunk", 20, char=WREN, subject="", place="Britain")
+        for i in range(60):
+            o = rs.select(self.r, H, "Britain", WREN, "about", about=WREN, roster=ROSTER, rng=_r.Random(i), plain=True)
+            self.assertEqual(len(o.ids), 1)                                      # one story, one sentence
+            self.assertEqual(list(o.said), o.ids)
+            self.assertNotIn("ask them how", o.angle)                            # a question is not what follows a telling
+        two = rs.select(self.r, H, "Britain", WREN, "about", about=WREN, roster=ROSTER, rng=_r.Random(1))
+        self.assertEqual(len(two.ids), 2)                                        # without it: as before
+        f = self.offer(speaker=WREN, mode="follow", follow=a, plain=True)          # "tell me more" is not a first telling
+        self.assertEqual(f.said, {})
+        self.assertIn(rs.OWN_WORDS, f.block)
+
+    def test_the_sentence_is_put_right_for_you_and_numbers_are_words(self):
+        self.assertEqual(rs.said_sentence("you was killed by 3 dragons near Yew", "Folk say", True),
+                         "Folk say you were killed by three dragons near Yew.")
+        self.assertEqual(rs.said_sentence("you's horse has gone to the healers 14 times", "I hear", True),
+                         "I hear your horse has gone to the healers fourteen times.")
+        self.assertEqual(rs.said_sentence("you slew a dragon near Yew, with the help of their beasts", "Word is", True),
+                         "Word is you slew a dragon near Yew, with the help of your beasts.")
+        self.assertEqual(rs.said_sentence("a tamer slew 250 dragons near Yew", "They say"),
+                         "They say a tamer slew two hundred and fifty dragons near Yew.")
+        self.assertEqual([rs._number_word(n) for n in (1, 19, 20, 44, 100, 101, 999, 1000, 0)],
+                         ["one", "nineteen", "twenty", "forty-four", "a hundred", "a hundred and one",
+                          "nine hundred and ninety-nine", "1000", "0"])
+
 
 
 class Tease(unittest.TestCase):

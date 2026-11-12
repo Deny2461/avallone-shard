@@ -13,6 +13,7 @@ import re
 import secrets
 import unicodedata
 
+import madeup as madeup_mod
 import smalltalk
 
 OPEN, CLOSE = "⟦", "⟧"          # the mathematical white square brackets
@@ -65,13 +66,78 @@ ANGLES_OTHER = [
 FOLLOW_UNSAFE = ("customer", "ask them how")   # angles that invite a source or new details - not on follow-ups
 
 
-def pick_angle(types, is_speaker, about_other, rng=None, follow=False):
+OWN_WORDS = ("Say it in your own words, the way someone of your trade would - do not copy the wording of the notes, "
+             "and do not begin with " + ", ".join(STOCK_OPENINGS) + ". One or two short sentences.")
+# ---- Plain telling (Codex code R2-R5, RUM-C3 B) ----
+# Whether a reply TOLD a real story decides two things: the heard mark, and - for a player's own story - whether the
+# shard may keep a correction ticket. Four rounds tried to READ that out of the model's free wording (key words; act +
+# thing + person in one sentence; fixed sentence forms; closed word lists). Each time Codex found another sentence that
+# passed and told something else ("I slew a dragon while you were away", "you slew a troll and a knight took a dragon",
+# "you slew three dragonflies", "a dragon was slain in effigy by you"). So nothing is read any more. With plain telling
+# on, THE CODE WRITES THE SENTENCE - an opening and the story exactly as the notes have it - the model is told to say
+# that sentence first, word for word, and then add its own remark; and a story counts as told only when the reply
+# BEGINS WITH THAT SENTENCE, character for character (_begins_with). When it does not, the brain says the sentence
+# itself (brain.respond). There is no other way to a strict "told", and so none to a correction-ticket mark.
+PLAIN_OPENINGS = ("They say", "I hear", "Word is", "Folk say")
+PLAIN_LINE = ('Say this sentence first, exactly as it is written, word for word, with nothing in front of it but your '
+              'action: "{sentence}" Change nothing in it. Then add one short remark of your own, the way someone of your '
+              'trade would. Two short sentences in all.')
+PLAIN_UNSAFE = ("ask them how",)     # "you ask them how it really happened": a question is not what follows a telling
+_SMALL = ("zero one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen "
+          "eighteen nineteen").split()
+_TENS = "twenty thirty forty fifty sixty seventy eighty ninety".split()
+
+
+def _number_word(n):
+    """1..999 in words ("forty", "forty-four", "a hundred", "two hundred and fifty"); anything else stays digits."""
+    if not 0 < n < 1000:
+        return str(n)
+    if n < 20:
+        return _SMALL[n]
+    if n < 100:
+        return _TENS[n // 10 - 2] + ("-" + _SMALL[n % 10] if n % 10 else "")
+    head = ("a" if n // 100 == 1 else _SMALL[n // 100]) + " hundred"
+    return head + (" and " + _number_word(n % 100) if n % 100 else "")
+
+
+def said_sentence(note, opening, to_listener=False):
+    """THE sentence for one real story: an opening and the note itself. `note` is the story as the notes have it
+    (rumours.render_for); for the listener's own story it was rendered with who="you" and is put right here ("you was
+    killed" -> "you were killed", "you's horse" -> "your horse"). Numbers are written as words."""
+    text = str(note or "").strip()
+    if to_listener:
+        text = re.sub(r"^you was\b", "you were", text)
+        text = re.sub(r"^you is\b", "you are", text)
+        text = re.sub(r"^you's\b", "your", text)
+        text = text.replace("the wolves had them", "the wolves had you").replace("help of their beasts", "help of your beasts")
+    text = re.sub(r"(?<![\w-])\d{1,3}(?![\w-])", lambda m: _number_word(int(m.group(0))), text)
+    return f"{opening} {text.rstrip('.!?')}."
+
+
+def _begins_with(say, sentence):
+    """Does the reply begin with THAT sentence - after at most one leading action in brackets - and end it there? Only
+    case, spacing and the kind of full stop (. ! ...) may differ. "... near Britain in a play", "... near Britain?"
+    and "... three dragonflies" do not begin with "... three dragons near Britain." """
+    if not sentence:
+        return False
+    squash = lambda t: re.sub(r"\s+", " ", _norm(t)).strip()
+    said = squash(re.sub(r"^\s*(?:\[[^\[\]\n]{0,80}\]|<[^<>\n]{0,80}>|\*[^*\n]{0,80}\*)\s*", "", say or "", count=1))
+    want = squash(sentence).rstrip(".")
+    if not said.startswith(want):
+        return False
+    rest = said[len(want):]
+    return rest == "" or rest[0] in ".!\u2026"
+
+
+def pick_angle(types, is_speaker, about_other, rng=None, follow=False, plain=False):
     rng = rng or RNG
     grim = any(t in GRIM for t in types)
     pool = ANGLES_ANY + (ANGLES_SPEAKER if is_speaker else []) + (ANGLES_OTHER if about_other else [])
     pool = [a for a, cheery in pool if not (grim and cheery)]
     if follow:
         pool = [a for a in pool if not any(x in a for x in FOLLOW_UNSAFE)]
+    if plain:
+        pool = [a for a in pool if not any(x in a for x in PLAIN_UNSAFE)]
     return rng.choice(pool)
 
 
@@ -127,6 +193,13 @@ class Offer:
         self.keys = {}          # rumour id -> word stems that show the reply told it (dev play test 2026-10-29)
         self.own = set()        # claim words of the offered deeds themselves (a sentinel sentence may use only these)
         self.tease = ""         # greet (2026-11-02): the one teaser line the code adds after the model's reply
+        # Rumour step C2: stories with no deed behind them (made-up, one-off, GM-planted)
+        self.weak = {}          # rumour id -> its common content stems: two of these in a reply also count as told
+        self.canon = {}         # rumour id -> the story's own text, for the fixed wording when the reply did not tell it
+        self.source = {}        # rumour id -> "made_up" | "one_off" | "gm_planted" (log only)
+        self.about = {}         # Part A: rumour id -> (character id, deed kind) of a real deed story on offer
+        self.plain = False      # plain telling is in force for this reply (brain plain_telling)
+        self.said = {}          # rumour id -> THE sentence that tells that real deed; the reply must begin with it (said_sentence)
 
     def wire(self):
         return {"sentinel": self.sentinel, "char_id": self.char_id, "descriptor": self.descriptor,
@@ -147,10 +220,9 @@ def _tail(out, off, picked, rumours, pt, speaker, rng, told=True):
                                         else ' Call anyone in the gossip "they" or "that one".'))
     if told:
         types = [r["type"] for r in picked]
-        off.angle = pick_angle(types, off.is_speaker, bool(off.char_id) and not off.is_speaker, rng)
+        off.angle = pick_angle(types, off.is_speaker, bool(off.char_id) and not off.is_speaker, rng, plain=bool(off.said))
         out.append(f"How you tell it this time: {off.angle}.")
-        out.append("Say it in your own words, the way someone of your trade would - do not copy the wording of the "
-                   "notes, and do not begin with " + ", ".join(STOCK_OPENINGS) + ". One or two short sentences.")
+        out.append(PLAIN_LINE.format(sentence=off.said[off.ids[0]]) if off.said else OWN_WORDS)
     act = smalltalk.action_line(rng)
     if act:
         out.append(act)
@@ -159,11 +231,13 @@ def _tail(out, off, picked, rumours, pt, speaker, rng, told=True):
     return off
 
 
-def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentinel", rng=None, ambiguous=False):
+def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentinel", rng=None, ambiguous=False,
+                 plain=False):
     """They named a real player. Offer only THAT person's named stories (vague ones cannot be pinned on anyone), still
     one person per reply with the sentinel; with none, an offer that tells her she has heard nothing of them."""
     rng = rng or RNG
     off = Offer()
+    off.plain = bool(plain)
     off.mode = MODE_ABOUT
     if ambiguous:
         # Codex 5c-1 code review finding 2: two people named, or a first name several share - never guess the person.
@@ -186,17 +260,21 @@ def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentin
     else:
         token = ""
     lines, picked = [], []
-    for r in mine[:MAX_ROWS]:
+    for r in mine[:1 if plain else MAX_ROWS]:      # plain telling: ONE story, said in one exact sentence
         lines.append("- " + rumours.render_for(r, who=token))
         picked.append(r)
         off.ids.append(r["id"])
         off.keys[r["id"]] = _keys(r, rumours)
+        off.about[r["id"]] = (r["char"], r["type"])
         off.own |= CLAIM_WORDS.get(r["type"], set())
         if sum(len(x) for x in lines) > MAX_CHARS:
             lines.pop()
             picked.pop()
             off.ids.pop()
             break
+    if plain and len(picked) == 1 and token:
+        note = rumours.render_for(picked[0], who="you") if off.is_speaker else lines[0][2:]
+        off.said[picked[0]["id"]] = said_sentence(note, rng.choice(PLAIN_OPENINGS), off.is_speaker)
     if picked:
         off.descriptor = picked[0]["descriptor"]
     out = []
@@ -223,34 +301,85 @@ def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentin
     return _tail(out, off, picked, rumours, pt, speaker, rng, told=bool(lines))
 
 
+ONE_OFF_SLOT = "one-off"    # the whole one-off category is ONE choice in the draw, with one fixed weight (C2)
+LORE_SLOT = "lore-pages"    # likewise the hand-written rumour pages of the lore (the tea, the taxes, the moongates)
+LORE_TURN = "lore-turn"     # select()'s answer when that choice is drawn: no offer - this reply is told from the lore pages
+
+
+def _is_text(r):
+    """A story with no deed behind it whose words ARE the story: made-up or one-off (C2)."""
+    return r.get("text") is not None
+
+
+def _line(rumours, r, **kw):
+    return r["text"] if _is_text(r) else rumours.render_for(r, **kw)
+
+
 def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), name_mode="sentinel", rng=None, about="",
-           recent=(), ambiguous=False, teased=False):
+           recent=(), ambiguous=False, teased=False, madeup=None, npc_id="", lore_weight=0.0, plain=False):
     """Build the Offer for one reply, or None when there is nothing to say. `town` must already be the shard's
-    region-based town (finding 4); an unknown town gives None."""
+    region-based town (finding 4); an unknown town gives None.
+
+    Rumour step C2: with `madeup` (a madeup.MadeUp; None = exactly the behaviour before the step) a "what news" reply is
+    ONE weighted draw over the town's real stories, the made-up stories this NPC has heard, and one "one-off line"
+    choice - each list already cut to its own limit. Real stories weigh more (their deed weight, 1-3; made-up 1.0; the
+    one-off choice 2.0), the listener's own still double, heard ones a quarter; nothing just heard is retold. A
+    follow-up finds a made-up story by its exact id. Greetings and "about" are unchanged (real stories only).
+    `lore_weight` > 0 (the caller has hand-written rumour pages for this reply) adds ONE more choice with that weight:
+    if it is drawn the answer is LORE_TURN - no offer, the reply is told from those pages as before the step. Found in
+    the first real-model trial (2026-11-11): those pages - a handful of lines, tracked by nothing - were told on three
+    "what news" turns in four, which is why "what news" kept returning the same few subjects."""
     if not town or mode not in (MODE_NEWS, MODE_GREET, MODE_FOLLOW, MODE_ABOUT):
         return None
     rows = rumours.speech_rows(pt, town)
     if mode == MODE_ABOUT:
-        return select_about(rumours, rows, pt, about, speaker, roster, name_mode, rng, ambiguous=ambiguous)
-    if not rows:
+        return select_about(rumours, rows, pt, about, speaker, roster, name_mode, rng, ambiguous=ambiguous, plain=plain)
+    mu = madeup is not None and mode in (MODE_NEWS, MODE_FOLLOW)
+    if not rows and not mu:
         return None
     rng = rng or RNG
     exclude = set(exclude or ())
+    recent = set(recent or ())
+    # heard-ness also goes by CONTENT for made-up lines: the same words under another id (a one-off and a travelling
+    # story) are the same talk to the listener (Codex design R2)
+    heard_keys = {k for k in (madeup_mod.key_of(x) for x in exclude) if k} if mu else set()
+    recent_keys = {k for k in (madeup_mod.key_of(x) for x in recent) if k} if mu else set()
     # One weighted draw instead of fixed "own story first" (play test 2026-10-30: it ran in streaks - all Legolas,
     # never Brynn). Own story boosted; recently heard damped.
     def boost(r):
         m = OWN_BOOST if (not r["vague"] and r["char"] == speaker) else 1.0
-        return m * (HEARD_DAMP if r["id"] in exclude else 1.0)
+        heard = r["id"] in exclude or (r.get("key") is not None and r["key"] in heard_keys)
+        return m * (HEARD_DAMP if heard else 1.0) * float(r.get("weight", 1.0))
+    if mu and mode == MODE_NEWS:
+        rows = rows + madeup.rows(pt, town, npc_id)
+        rows.append({"id": ONE_OFF_SLOT, "char": "", "type": madeup_mod.T_ONE, "vague": True,
+                     "weight": float(madeup.flow()["one_off_weight"])})
+        if lore_weight > 0:
+            rows.append({"id": LORE_SLOT, "char": "", "type": "lore", "vague": True, "weight": float(lore_weight)})
     rows = _weighted(rows, rumours, rng, boost)
-    if mode == MODE_NEWS and recent:
+    if mode == MODE_NEWS and (recent or recent_keys):
         # heard in the last few minutes (shard setting, default 10): never retold on "what news" (play test 5)
-        recent = set(recent)
-        rows = [r for r in rows if r["id"] not in recent]
+        rows = [r for r in rows if r["id"] not in recent and not (r.get("key") is not None and r["key"] in recent_keys)]
     if mode == MODE_GREET:
         # Unprompted: never one this player heard in the last 2 h; about anyone (the owner, chat, 2026-10-29).
         rows = [r for r in rows if r["id"] not in exclude][:1]
     elif mode == MODE_FOLLOW:
         rows = [r for r in rows if r["id"] == follow][:1]
+        if not rows and mu:
+            kept = madeup.resolve(follow, pt, town)     # the exact story, whatever this NPC's share of the set is now
+            rows = [kept] if kept else []
+    if mu and mode == MODE_NEWS:
+        # The one-off choice becomes a real line only if it is the one drawn (and only then is it kept for a follow-up).
+        if rows and rows[0]["id"] == LORE_SLOT:
+            return LORE_TURN
+        rows = [r for r in rows if r["id"] != LORE_SLOT]
+        while rows and rows[0]["id"] == ONE_OFF_SLOT:
+            line = madeup.one_off(pt, town, rng, avoid=heard_keys | recent_keys)
+            if line is None or not madeup.pin_one_off(line, pt):
+                rows = rows[1:]    # nothing left - or its id is taken by another text (Codex RUM-C2): not offered
+            else:
+                rows = [line] + [r for r in rows[1:] if r["id"] != ONE_OFF_SLOT]
+        rows = [r for r in rows if r["id"] != ONE_OFF_SLOT]
     if not rows:
         return None
 
@@ -258,6 +387,7 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
     # could move the name onto it. A second story rides along only if it is the same person's, or (PAIR_SHARE of "what
     # news") when BOTH stories are told with no name at all (the owner, chat, 2026-10-30).
     off = Offer()
+    off.plain = bool(plain)
     off.mode = mode
     top = rows[0]
     if mode == MODE_FOLLOW:
@@ -269,13 +399,13 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
     else:
         second = next((r for r in rows[1:] if r["char"] != top["char"]), None)
         pair = (mode == MODE_NEWS and second is not None and speaker not in (top["char"], second["char"])
-                and rng.random() < PAIR_SHARE)
+                and not plain and rng.random() < PAIR_SHARE)
         if pair:
             subject, picked = "", [top, second]
         else:
             subject = "" if top["vague"] else top["char"]
             picked = ([r for r in rows if not r["vague"] and r["char"] == subject] if subject else [top])[
-                :NEWS_ROWS if mode == MODE_NEWS else MAX_ROWS]
+                :NEWS_ROWS if mode == MODE_NEWS or plain else MAX_ROWS]   # plain telling: ONE story, one exact sentence
         off.is_speaker = bool(subject) and subject == speaker
     off.char_id = subject
     names = {str(p.get("id", "")): str(p.get("name", "")) for p in roster or () if p.get("id")}
@@ -296,15 +426,27 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
     for r in picked:
         if not r["vague"] and r["char"] == (speaker if off.is_speaker else subject) and (subject or off.is_speaker):
             text = rumours.render_for(r, who=token)
+            who = "you" if off.is_speaker else token   # the reply must show WHO: "you", or the name slot
         else:
-            text = rumours.render_for(r, vague=True)   # anyone else: never a name (finding 1)
+            text = _line(rumours, r, vague=True)       # anyone else: never a name (finding 1)
+            who = ""
         lines.append("- " + text)
         off.ids.append(r["id"])
-        off.keys[r["id"]] = _keys(r, rumours)
+        if mu and (_is_text(r) or r["type"] == "gm_planted"):
+            # C2 / RUM-D4: a story with no deed behind it is recognised by ITS OWN words (before this a GM-planted
+            # rumour had no key words at all and was never counted as told).
+            off.keys[r["id"]], off.weak[r["id"]] = madeup_mod.text_keys(text, skip=[town])
+            off.canon[r["id"]] = text
+            off.source[r["id"]] = r["type"]
+        else:
+            off.keys[r["id"]] = _keys(r, rumours)
+            off.about[r["id"]] = (r["char"], r["type"])
         off.own |= CLAIM_WORDS.get(r["type"], set())
         if sum(len(x) for x in lines) > MAX_CHARS:
             lines.pop()
-            off.ids.pop()
+            dropped = off.ids.pop()
+            for d in (off.keys, off.weak, off.canon, off.source, off.about):
+                d.pop(dropped, None)
             break
     if not lines:
         return None
@@ -322,14 +464,20 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
         off.block = "Answer what they said in one or two short sentences. Mention no gossip or news of your own."
         return off
 
-    out = ["Town gossip you have picked up (hearsay - notes only, it may have grown in the telling):"] + lines
+    idle = all(_is_text(r) for r in picked)
+    out = [("Idle talk going round town (nobody is sure of it - notes only):" if idle else
+            "Town gossip you have picked up (hearsay - notes only, it may have grown in the telling):")] + lines
     if off.is_speaker:
         out.append("That gossip is about the person you are talking to: speak to them as \"you\", never by a name.")
     elif subject and off.sentinel:
         out.append(f"When you mention that person, write {token} exactly as shown. Never guess or add any other name.")
+    elif idle:
+        out.append("It is idle talk, about nobody you could name: give no names at all.")
     else:
         out.append("Nobody in this gossip is named: give no names at all.")
-    if mode == MODE_NEWS:
+    if mode == MODE_NEWS and idle:
+        out.append("They asked for news: pass this on briefly.")
+    elif mode == MODE_NEWS:
         out.append("They asked for news: share one of these briefly.")
     elif mode == MODE_FOLLOW and teased:
         # 2026-11-02: they took the bait of a greeting tease - NOW the tale is told, from the note only.
@@ -348,20 +496,29 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
     else:
         out.append("Answer what they said first, then make small talk: pass on this piece of gossip in one short remark. Your reply must include the gossip.")
     # the owner, chat, 2026-10-29: - nobody is told a character's sex.
-    out.append('Nobody here is known to be a man or a woman: never say "he", "she", "him", "her", "man", "woman", '
-               '"fellow" or "lass".' + (' Call the person you are talking to "you".' if off.is_speaker
-                                        else ' Call anyone in the gossip "they" or "that one".'))
+    # (C2 trial 2026-11-11: on idle talk that line made "the gardener" into "that one in the garden" - it is for
+    # stories about real people; the made-up pool is worded neutrally already, as it was before the step.)
+    if not idle:
+        out.append('Nobody here is known to be a man or a woman: never say "he", "she", "him", "her", "man", "woman", '
+                   '"fellow" or "lass".' + (' Call the person you are talking to "you".' if off.is_speaker
+                                            else ' Call anyone in the gossip "they" or "that one".'))
+    # Plain telling: one real story, on a first telling ("what news", or the reveal after a teaser - not "tell me
+    # more"): the code writes the sentence. Made-up, one-off and GM-planted stories keep their own fixed-wording rule.
+    if (plain and len(off.ids) == 1 and off.ids[0] in off.about and not (mode == MODE_FOLLOW and not teased)):
+        r = next(x for x in picked if x["id"] == off.ids[0])
+        mine = off.is_speaker and not r["vague"] and r["char"] == speaker
+        note = rumours.render_for(r, who="you") if mine else lines[0][2:]
+        off.said[r["id"]] = said_sentence(note, rng.choice(PLAIN_OPENINGS), mine)
     types = [r["type"] for r in picked]
     off.angle = pick_angle(types, off.is_speaker, bool(subject) and not off.is_speaker, rng,
-                           follow=mode == MODE_FOLLOW and not teased)
+                           follow=mode == MODE_FOLLOW and not teased, plain=bool(off.said))
     if mode == MODE_FOLLOW:
         off.forbid = _follow_forbid(picked[0], rumours)
-        if teased:   # 2026-11-02 trial: a reveal retells the note, so the note's own places and words are not new facts
+        if teased or _is_text(picked[0]):   # 2026-11-02 trial: a reveal retells the note, so the note's own places and words are not new facts; C2: a made-up line's own words are the story
             note = " ".join(lines).lower()
             off.forbid = frozenset(w for w in off.forbid if w not in note)
     out.append(f"How you tell it this time: {off.angle}.")
-    out.append("Say it in your own words, the way someone of your trade would - do not copy the wording of the notes, "
-               "and do not begin with " + ", ".join(STOCK_OPENINGS) + ". One or two short sentences.")
+    out.append(PLAIN_LINE.format(sentence=off.said[off.ids[0]]) if off.said else OWN_WORDS)
     act = smalltalk.action_line(rng)
     if act:
         out.append(act)
@@ -604,14 +761,77 @@ def follow_depth(history):
     return n
 
 
-def used(say, offer):
+_DENYING = re.compile(r"^(no|not|nothing|never|none|nobody|neither|nor|without|hardly|cannot|[a-z]+n't|dont|wont|cant|"
+                      r"isnt|wasnt|werent|didnt|doesnt|hasnt|havent|hadnt|wouldnt|couldnt|shouldnt|aint|"
+                      # ... and words that make it something that did not happen: "you should slay a dragon some day"
+                      r"should|could|would|might|may|if|will|shall|someday|ever|wish|hope|unless|suppose|imagine|pretend)$")
+def _stems_of(text):
+    words = re.findall(r"[a-z]+", text)
+    return {w[:4] for w in words if len(w) >= 4} | {w for w in words if len(w) == 3}   # "ale", "eel" matched whole
+
+
+def _word_stems(words):
+    return _stems_of(" ".join(str(w).lower() for w in words or ()))
+
+
+def _denies(part, story_text):
+    """Does this part of a sentence deny something, or speak of what did not (yet) happen? Such a word counts unless
+    it stands in the reply exactly as it stands in the story itself - the word with the two words after it ("would not come down", "nobody was hurt").
+    Codex code R2 (RUM-C3 A): R1 excused the bare WORD wherever it appeared, so "The goat did not climb onto any roof"
+    passed as telling the story of the goat that "would not come down"."""
+    words = re.findall(r"[a-z]+(?:['\u2019][a-z]+)?", part)
+    story = " " + " ".join(re.findall(r"[a-z]+(?:['\u2019][a-z]+)?", _norm(story_text or ""))) + " "
+    for i, w in enumerate(words):
+        if _DENYING.match(w.replace("\u2019", "'")):
+            three = words[i:i + 3]
+            if len(three) < 3 or " " + " ".join(three) + " " not in story:
+                return True
+    return False
+
+
+def _parts(sentence):
+    return [p for p in re.split(r"[,;:]|\s-\s|\bbut\b", sentence) if p.strip()]
+
+
+def _told_text_story(say, strong, weak, canon):
+    """Codex code R1 (RUM-C3): did this reply TELL a story that has no deed behind it (made-up, one-off, GM-planted)?
+    One incidental word is not telling it ("The market is quiet today." for the peacock loose in the market), and a
+    sentence that denies ("I have seen nothing escape.") is not telling it either. So: ONE sentence must carry at least
+    TWO of the story's own content words, at least one of them a distinctive one, and no part of that sentence that
+    carries a word of the story may deny (_denies). Anything less is "not told", and the caller then says the story in
+    its fixed wording or leaves it out - never marks it heard on the strength of a passing word."""
+    strong, both = set(strong or ()), set(strong or ()) | set(weak or ())
+    for sentence in _sentences(_norm(say)):
+        stems = _stems_of(sentence)
+        if len(both & stems) < 2 or not (strong & stems):
+            continue
+        if any(both & _stems_of(part) and _denies(part, canon) for part in _parts(sentence)):
+            continue
+        return True
+    return False
+
+
+def used(say, offer, strict=True):
     """The rumour ids this reply actually told. Offered is not told: only these count as heard (dev play test
-    2026-10-29: the model passed over the deed 3 times out of 3 and the shard still marked it heard)."""
+    2026-10-29: the model passed over the deed 3 times out of 3 and the shard still marked it heard). A story with no
+    deed behind it needs _told_text_story. A real deed:
+      strict     - the reply BEGINS WITH the sentence the code wrote for it (Offer.said, _begins_with). The ONLY
+                   reading a correction-ticket mark may rest on (brain.correctable), whatever the switch says. A story
+                   with no such sentence - plain telling off, or a follow-up - is never strictly told.
+      not strict - the reading live has had since 2026-10-29, for the heard mark while plain telling is off and the
+                   model is still told to use its own words: one key word of the story, or the name slot alone. Loose
+                   on purpose and known to be (Codex code R2): it may mark a story heard on a passing word."""
     if offer is None:
         return []
-    stems = {w[:4] for w in re.findall(r"[a-z]+", _norm(say)) if len(w) >= 4}
-    hit = [i for i in offer.ids if set(offer.keys.get(i) or ()) & stems]
-    if not hit and offer.sentinel and offer.sentinel in say:
+    hit, stems = [], {w[:4] for w in re.findall(r"[a-z]+", _norm(say)) if len(w) >= 4}
+    for i in offer.ids:
+        if i in offer.canon:
+            if _told_text_story(say, offer.keys.get(i), offer.weak.get(i), offer.canon.get(i)):
+                hit.append(i)
+        elif i in offer.about and (_begins_with(say, offer.said.get(i)) if strict
+                                   else bool(set(offer.keys.get(i) or ()) & stems)):
+            hit.append(i)
+    if not strict and not hit and offer.sentinel and offer.sentinel in say and offer.ids[:1] and offer.ids[0] in offer.about:
         hit = offer.ids[:1]
     return hit
 

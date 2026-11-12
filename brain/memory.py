@@ -33,10 +33,12 @@ KINDS = {
     "gift_given",                # 5c-2 2b: an accepted tip or liked gift, at most one per NPC + character + Central day
     "player_used_hateful_language",  # 5c-2 2b (B4): a line on the narrow slur list, once per NPC + character + day, no text
     "talked_with",               # Stage A3: who an NPC traded lines with (facts only). Read ONLY by acquaintances().
+    "rumour_corrected",          # Rumour step, Part A: a player's correction to a story about themselves (npc = the
+                                 # world id; typed details only). Read ONLY by rumours.py (Rumours._fix).
 }
 # Stage A3 (Codex design R1-1): kinds no ordinary reader may ever see - not retrieval, not the full-text index, not
 # reflection. Each has its own dedicated reader.
-PRIVATE_KINDS = ("talked_with",)
+PRIVATE_KINDS = ("talked_with", "rumour_corrected")
 NOT_PRIVATE = "kind NOT IN (" + ", ".join(f"'{k}'" for k in PRIVATE_KINDS) + ")"
 ITEM = re.compile(r"^((?:pet|petfix)\|[a-z]+( [a-z]+)?\|[A-Z][A-Za-z'\-]{1,15}|trade\|[a-z]+(?: and [a-z]+)?|home\|[A-Z][A-Za-z' ]{1,20}|request\|[^|]{3,90})$")
 CARD_ID = re.compile(r"^[a-z]:[A-Za-z0-9:_\-]{1,40}$")
@@ -309,6 +311,12 @@ class Ledger:
                         npc, char = str(ev["npc_id"])[:36], str(ev["char_id"])[:36]
                         if kind == "deed":
                             check_deed(ev.get("facts"))
+                        if kind == "rumour_corrected":
+                            import corrections
+                            import rumours as _rumours
+                            if npc != _rumours.WORLD_ID:
+                                raise ValueError("correction: not a world record")
+                            corrections.check_facts(ev.get("facts"))
                         if kind in ("visit_summary", "visited", "reply_delivered", "traded", "gift_given",
                                     "player_used_hateful_language"):
                             check_named(kind, ev.get("facts"))

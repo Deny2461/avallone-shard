@@ -43,6 +43,17 @@ public static class Exchange
 
     public static bool Enabled { get; private set; }
     public static bool MemoryOn { get; private set; }   // Stage A3: record and read who has traded lines with whom
+
+    // Rumour step C1 (2026-11-11; the owner's carry-in; switch
+    // avallone.ai.reactions, off by default). A reply that told gossip never starts an exchange - it was written by a model
+    // that had the gossip in front of it. With this on, the companion it named may still answer with ONE line, as a
+    // one-line exchange that is given NOTHING the NPC said: an empty transcript and a number, 0..5, for the fixed sort of
+    // remark the brain had asked that NPC for before the reply was written (Codex design R1 RUM-D1: no filter on the
+    // reply's words can make it safe; the wall is what the call is given). All the ordinary exchange rules still hold:
+    // one at a time, the player's words always win, the replies-between and NPC-rest spacing, a free model, staleness.
+    // It is never extended and never recorded as "talked with".
+    public static bool Reactions { get; private set; }
+    public const int ReactSorts = 6;   // party.ANGLES / exchange.REACTIONS in the brain
     public static TimeSpan NpcRest { get; set; } = TimeSpan.FromMinutes(4);   // per townsperson, booked before the first call
     public static int RepliesBetween { get; set; } = 2;                       // NPC replies a player hears between exchanges
     // the owner, chat, 2026-11-09 (after play test 2: every exchange was exactly three lines)
@@ -72,9 +83,11 @@ public static class Exchange
     public static TimeSpan PausePerChar { get; set; } = TimeSpan.FromMilliseconds(10);
     public static TimeSpan PauseCap { get; set; } = TimeSpan.FromSeconds(4.5);
 
-    internal static TimeSpan PauseFor(string answered, double roll)
+    internal static TimeSpan PauseFor(string answered, double roll) => PauseFor(answered?.Length ?? 0, roll);
+
+    internal static TimeSpan PauseFor(int answeredChars, double roll)
     {
-        var t = PauseMin + PauseSpread * Math.Clamp(roll, 0, 1) + PausePerChar * (answered?.Length ?? 0);
+        var t = PauseMin + PauseSpread * Math.Clamp(roll, 0, 1) + PausePerChar * Math.Max(0, answeredChars);
         return t > PauseCap ? PauseCap : t;
     }
 
@@ -109,6 +122,8 @@ public static class Exchange
         public bool CallOut;            // a step's model call is out right now
         public bool Unanswered;         // the last call ended WITHOUT the brain's answer (timeout, transport failure)
         public bool Extended;           // one extra line was granted because the closing line was a question
+        public int? React;              // C1: a one-line reaction of this fixed sort - the transcript then stays EMPTY
+        public int OpeningChars;        // C1: only the LENGTH of the line she answers (for the pause), never its words
         // Step 2 (Codex S2-D2): the subjects of the lines REALLY spoken. Replaced only after Speak succeeds; a reply that
         // is refused, late, pre-empted or thrown away by the last check never touches it. null = nothing committed.
         public string[] Topics;
@@ -138,6 +153,7 @@ public static class Exchange
     public static bool Settling => _settling > 0;
     internal static Run Current => _active;
     public static int Started { get; private set; }
+    public static int ReactionsStarted { get; private set; }   // C1: how many of those were one-line reactions
     public static int Completed { get; private set; }
     public static int LinesSaid { get; private set; }
     public static string LastEnd { get; private set; } = "";
@@ -150,6 +166,7 @@ public static class Exchange
         PauseMin = TimeSpan.FromSeconds(Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangePauseSeconds", 2), 0, 6));
         MaxLines = Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangeMaxLines", MaxSteps), 1, MaxSteps);
         MemoryOn = ServerConfiguration.GetOrUpdateSetting("avallone.ai.npcMemory", false);
+        Reactions = ServerConfiguration.GetOrUpdateSetting("avallone.ai.reactions", false);
         EventSink.Speech += OnSpeech;
         CommandSystem.Register("Exchanges", AccessLevel.Administrator, Exchanges_OnCommand);
     }
@@ -160,7 +177,7 @@ public static class Exchange
             Enabled ? "ON" : "off", NpcRest, RepliesBetween, MaxLines, PauseMin.TotalSeconds, MemoryOn ? "ON" : "off"
         );
 
-    [Usage("Exchanges [on|off|status|memory on|memory off]")]
+    [Usage("Exchanges [on|off|status|memory on|memory off|reactions on|reactions off]")]
     [Description("Avallone: a companion and the townsperson who just spoke to her may trade a line or two. on/off is saved. 'memory on|off': whether they remember having talked (saved).")]
     public static void Exchanges_OnCommand(CommandEventArgs e)
     {
@@ -182,6 +199,16 @@ public static class Exchange
             ServerConfiguration.SetSetting("avallone.ai.npcMemory", MemoryOn ? "true" : "false");
         }
 
+        if (verb == "reactions" && e.Length > 1 && e.GetString(1).ToLowerInvariant() is "on" or "off")
+        {
+            // Rumour step C1. Off = a gossip reply is followed by silence from the companion, as before.
+            Reactions = e.GetString(1).ToLowerInvariant() == "on";
+            ServerConfiguration.SetSetting("avallone.ai.reactions", Reactions ? "true" : "false");
+        }
+
+        e.Mobile.SendMessage(
+            $"Her one-line reaction to a gossip reply that names her is {(Reactions ? "ON" : "OFF")} (saved); {ReactionsStarted} since start."
+        );
         e.Mobile.SendMessage(
             $"Exchanges are {(Enabled ? "ON" : "OFF")} (saved); {(Running ? "one is running" : "none running")}; " +
             $"{Started} started, {Completed} ran to the end, {LinesSaid} lines said; last end: {(LastEnd.Length > 0 ? LastEnd : "-")}."
@@ -253,7 +280,17 @@ public static class Exchange
     // or shop-line turn. `openingRevision`: RevisionOf(from) read when the turn this reply answers began - if the
     // player has said anything since (an order, a shop word, a farewell, a line some cooldown ignored), the reply is
     // stale and never starts an exchange (Codex A2-R1). Never throws into the reply path.
-    public static void AfterReply(Mobile npc, Mobile from, TravelParty.PartyAsk party, string spoken, bool excluded, int openingRevision)
+    // Rumour step C1: the sort a reply may pass to AfterReply - only for a gossip turn, never when the turn was also a
+    // decency, conduct or shop-line turn (those stay silent, as before).
+    public static int? ReactSortOf(AiReply reply) =>
+        reply.Rumour != null && reply.Conduct == null && reply.Kind is not ("decency" or "shop") ? reply.ReactSort : null;
+
+    // Rumour step C1: `reactSort` = the reply's ReactSort (the brain sets it only on a reply that had gossip in its prompt
+    // and whose prompt really asked for that sort of remark). The caller passes it only for a gossip turn - never for a
+    // decency or shop-line turn. With the reactions switch on, such an excluded turn may start a one-line reaction.
+    public static void AfterReply(
+        Mobile npc, Mobile from, TravelParty.PartyAsk party, string spoken, bool excluded, int openingRevision, int? reactSort = null
+    )
     {
         if (from is not PlayerMobile pm || npc == null)
         {
@@ -263,7 +300,7 @@ public static class Exchange
         try
         {
             var since = _since.TryGetValue(pm.Serial, out var n) ? n : RepliesBetween;
-            _since[pm.Serial] = TryStart(npc, pm, party, spoken, excluded, since, openingRevision) ? 0 : Math.Min(since + 1, 1000);
+            _since[pm.Serial] = TryStart(npc, pm, party, spoken, excluded, since, openingRevision, reactSort) ? 0 : Math.Min(since + 1, 1000);
             if (_since.Count > 5000)
             {
                 _since.Clear(); // bound memory; losing counts only allows an exchange a little sooner
@@ -276,10 +313,14 @@ public static class Exchange
     }
 
     private static bool TryStart(
-        Mobile npc, PlayerMobile pm, TravelParty.PartyAsk party, string spoken, bool excluded, int since, int openingRevision
+        Mobile npc, PlayerMobile pm, TravelParty.PartyAsk party, string spoken, bool excluded, int since, int openingRevision,
+        int? reactSort = null
     )
     {
-        if (!Enabled || !AiGateway.Enabled || excluded || string.IsNullOrEmpty(spoken) || party?.Companions is not { Length: > 0 })
+        // C1: an excluded turn starts nothing - unless it is a gossip turn with a valid sort and reactions are on.
+        var react = excluded && Reactions && reactSort is >= 0 and < ReactSorts ? reactSort : null;
+        if (!Enabled || !AiGateway.Enabled || excluded && react == null || string.IsNullOrEmpty(spoken) ||
+            party?.Companions is not { Length: > 0 })
         {
             return false;
         }
@@ -310,11 +351,17 @@ public static class Exchange
                 Voices = [a, b],
                 Revision = openingRevision,
                 Roster = party.Roster ?? [],
-                Steps = Math.Clamp(PickLength(), 1, Math.Clamp(MaxLines, 1, MaxSteps))
+                Steps = react != null ? 1 : Math.Clamp(PickLength(), 1, Math.Clamp(MaxLines, 1, MaxSteps)),
+                React = react,
+                OpeningChars = spoken.Length
             };
             run.DeadlineAt = now + (long)DeadlineFor(run.Steps).TotalMilliseconds;
-            // What the NPC said aloud, with a pet's owner-given name masked as in its stored history (Codex A1-1).
-            run.Transcript.Add(new ExchangeLine(b.Name, TravelParty.ForHistory(spoken, party)));
+            if (react == null)
+            {
+                // What the NPC said aloud, with a pet's owner-given name masked as in its stored history (Codex A1-1).
+                run.Transcript.Add(new ExchangeLine(b.Name, TravelParty.ForHistory(spoken, party)));
+            }
+            // C1: a reaction keeps NO copy of the NPC's words - the run holds only how long the line was.
             _active = run;
             if (!StillGood(run, out why))
             {
@@ -338,7 +385,16 @@ public static class Exchange
         }
 
         Started++;
-        logger.Information("Exchange start {Id}: {A} <-> {B} beside {Player}, up to {Steps} line(s)", run.Id, a.Name, b.Name, pm.Name, run.Steps);
+        if (run.React != null)
+        {
+            ReactionsStarted++;
+            logger.Information("Exchange start {Id}: {A} reacts to {B} beside {Player} (one line, sort {Sort})", run.Id, a.Name, b.Name, pm.Name, run.React);
+        }
+        else
+        {
+            logger.Information("Exchange start {Id}: {A} <-> {B} beside {Player}, up to {Steps} line(s)", run.Id, a.Name, b.Name, pm.Name, run.Steps);
+        }
+
         _ = RunAsync(run);
         return true;
     }
@@ -429,7 +485,11 @@ public static class Exchange
         {
             for (var step = 0; step < run.Steps; step++)
             {
-                await Pause(PauseFor(run.Transcript.Count > 0 ? run.Transcript[^1].Text : null, Utility.RandomDouble()));
+                await Pause(
+                    run.React != null
+                        ? PauseFor(run.OpeningChars, Utility.RandomDouble())   // C1: time to "hear" a line of that length
+                        : PauseFor(run.Transcript.Count > 0 ? run.Transcript[^1].Text : null, Utility.RandomDouble())
+                );
 
                 if (!StillGood(run, out var why))
                 {
@@ -451,16 +511,18 @@ public static class Exchange
                     PersonaKey = speaker.PersonaKey,
                     PersonaVars = speaker.Vars,
                     Timeout = StepBudget,
+                    Falling = RealWeather.Word(speaker.Mobile), // rumour step C3
                     Exchange = new ExchangeAsk(
                         run.Id,
                         step,
                         new ExchangeVoice(speaker.Kind, speaker.Name, speaker.Title),
                         new ExchangeVoice(other.Kind, other.Name, other.Title),
                         speaker.Mobile is BaseCompanion c ? CompanionTrust.Band(c.GetTrust(run.Player)) : "",
-                        run.Transcript.ToArray(),
+                        run.React != null ? [] : run.Transcript.ToArray(),   // C1: a reaction sends no words at all
                         run.Roster,
                         step == run.Steps - 1,
-                        KnownNow(other.AiId)
+                        run.React != null ? null : KnownNow(other.AiId),      // ... and asks for no memory read
+                        run.React
                     )
                 };
 
@@ -530,7 +592,8 @@ public static class Exchange
                 // the owner's A3 play test (2026-11-10): the closing line was a question
                 // and nobody answered it. The model is asked to close without one, but does not always. So code decides:
                 // a closing question earns the other speaker ONE short answer, once, and never past the cap.
-                if (step == run.Steps - 1 && !run.Extended && text.EndsWith('?') && run.Steps < Math.Clamp(MaxLines, 1, MaxSteps))
+                if (run.React == null &&   // C1: a reaction is one line, question or not
+                    step == run.Steps - 1 && !run.Extended && text.EndsWith('?') && run.Steps < Math.Clamp(MaxLines, 1, MaxSteps))
                 {
                     run.Extended = true;
                     run.Steps++;
@@ -588,9 +651,9 @@ public static class Exchange
             Completed++;
         }
 
-        if (run.Lines > 0)
+        if (run.Lines > 0 && run.React == null)
         {
-            RecordTalk(run); // Stage A3: also when it was cut off after a line - they did talk
+            RecordTalk(run); // Stage A3: also when it was cut off after a line - they did talk. C1: a reaction is not a talk.
         }
 
         logger.Information("Exchange end {Id} ({Reason}) after {Lines} line(s)", run.Id, reason, run.Lines);
@@ -756,6 +819,8 @@ public static class Exchange
         Speak = (m, text) => m.Say(text);
         Online = pm => pm.NetState != null;
         MemoryOn = false;
+        Reactions = false;
+        ReactionsStarted = 0;
         _talked.Clear();
         _talkedDay = "";
         TalksRecorded = TalksNotRecorded = TalksWithTopics = 0;
@@ -767,4 +832,6 @@ public static class Exchange
     }
 
     internal static void SetMemoryForTests(bool on) => MemoryOn = on;
+
+    internal static void SetReactionsForTests(bool on) => Reactions = on;
 }

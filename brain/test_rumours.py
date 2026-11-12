@@ -87,7 +87,7 @@ class RumourTests(unittest.TestCase):
     def test_restore_after_spread_and_garbling(self):
         # Codex 2026-10-28 finding 1 (b)+(c): a rumour that already hopped and was garbled must vanish after a restore.
         self.deed("kill_notable", 0)                       # saved world holds this one (1-1)
-        rid = self.deed("kill_notable", 0, subject="lich")  # after the save (1-2)
+        rid = self.deed("provoked", 0, subject="lich", other="drake")  # after the save (1-2); a funny kind - only those garble
         spread = [r for r in self.r.view(8 * H) if r["id"] == rid]
         self.assertGreater(len(spread), 5)
         self.assertTrue(any(r["garbles"] for r in spread))
@@ -112,15 +112,87 @@ class RumourTests(unittest.TestCase):
     def test_garbling_is_mild_and_bounded(self):
         seen = set()
         for i in range(60):
-            self.deed("kill_notable", i * 30 * H, subject="beast " + _letters(i))
+            self.deed("provoked", i * 30 * H, subject="beast " + _letters(i), other="drake")
         for i in range(60):
-            for r in self.r.view(i * 30 * H + 20 * H):
+            for r in self.r.view(i * 30 * H + 10 * H):
                 self.assertLessEqual(len(r["garbles"]), 2)
                 seen.update(r["garbles"])
                 if not r["garbles"]:
                     self.assertTrue(r["text"].startswith("Racer X"), r["text"])
         self.assertTrue(seen <= set(rumours.DISTORTIONS))
         self.assertGreater(len(seen), 1)      # garbling does happen
+
+    # ---- rumour step, Part B (the owner, chat, 2026-11-11): serious stories and a player's own death never change ----
+    SERIOUS = ("murder", "died_notable", "kill_notable", "tame_notable", "pacified", "fished_bottle", "died_pathetic")
+
+    def test_serious_kinds_render_the_same_at_every_hop(self):
+        for n, typ in enumerate(self.SERIOUS):
+            towns, hops = set(), 0
+            for i in range(6):
+                t0 = (n * 6 + i) * 60 * H
+                rid = self.deed(typ, t0, subject="beast " + _letters(i), other="drake")
+                rows = [r for dt in (0, 2 * H, 5 * H, 8 * H, 11 * H) for r in self.r.view(t0 + dt) if r["id"] == rid]
+                self.assertEqual(len({r["text"] for r in rows}), 1, (typ, sorted({r["text"] for r in rows})))
+                self.assertFalse([r for r in rows if r["garbles"]], typ)
+                towns |= {r["town"] for r in rows}
+                hops = max([hops] + [r["hops"] for r in rows])
+            self.assertGreater(len(towns), 6, typ)      # they did travel ...
+            self.assertGreater(hops, 2, typ)            # ... several hops out
+
+    def test_funny_kinds_still_change(self):
+        for i in range(40):
+            self.deed("drunk", i * 30 * H)
+        self.assertTrue(any(r["garbles"] for i in range(40) for r in self.r.view(i * 30 * H + 7 * H)))
+
+    def _bad_file(self, change):
+        import json as _json
+        with open(CFG, encoding="utf-8") as fh:
+            cfg = _json.load(fh)
+        change(cfg["deeds"])
+        path = os.path.join(self.dir.name, "bad.json")
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(cfg, fh)
+        return path
+
+    def test_load_refuses_a_serious_kind_with_a_distort_list(self):
+        for typ in self.SERIOUS:
+            path = self._bad_file(lambda d, t=typ: d[t].update(distort=["place_drift"]))
+            with self.assertRaises(ValueError, msg=typ):
+                rumours.Rumours(self.led, path)
+
+    def test_both_death_kinds_stay_unchanged_even_if_flagged_funny(self):
+        for typ in rumours.PLAYER_DEATHS:
+            path = self._bad_file(lambda d, t=typ: d[t].update(funny=True, distort=["place_drift"]))
+            with self.assertRaises(ValueError, msg=typ):
+                rumours.Rumours(self.led, path)
+        # and behind the load check: the code itself gives a death no garbles even if a list got through
+        self.r.cfg["deeds"]["died_pathetic"]["distort"] = ["place_drift"]
+        rid = self.deed("died_pathetic", 0, subject="chicken")
+        self.assertFalse([r for r in self.r.view(10 * H) if r["id"] == rid and r["garbles"]])
+
+    def test_a_bad_file_is_refused_on_a_reload_too(self):
+        import json as _json, shutil
+        path = os.path.join(self.dir.name, "live.json")
+        shutil.copy(CFG, path)
+        r = rumours.Rumours(self.led, path)
+        with open(path, encoding="utf-8") as fh:
+            cfg = _json.load(fh)
+        cfg["deeds"]["murder"]["distort"] = ["count_up"]
+        with open(path, "w", encoding="utf-8") as fh:
+            _json.dump(cfg, fh)
+        os.utime(path, (1, 1))                                  # a different mtime, whatever the clock's grain
+        with self.assertRaises(ValueError):
+            r._load()
+        self.assertEqual(r.cfg["deeds"]["murder"]["distort"], [])   # the last good settings are still the ones in use
+        with self.assertRaises(ValueError):                     # and it is refused again, not adopted on the second look
+            r._load()
+
+    def test_the_shipped_file_has_no_serious_distort_list(self):
+        for name, d in self.r.cfg["deeds"].items():
+            if d.get("distort"):
+                self.assertTrue(d.get("funny") is True and name not in rumours.PLAYER_DEATHS, name)
+        for typ in self.SERIOUS:
+            self.assertEqual(self.r.cfg["deeds"][typ]["distort"], [], typ)
 
     def test_origin_hop_is_never_garbled(self):
         rid = self.deed("kill_notable", 0)

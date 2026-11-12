@@ -66,6 +66,23 @@ class Parse(unittest.TestCase):
         self.assertIn('- You: "Good day to you.', exchange.record(a))  # his own earlier line
         self.assertEqual(exchange.parse(step0(trust_band="adoring"))["band"], "")   # an unknown band is dropped
 
+    # ---- rumour step C5 (2026-11-11): the companion does not go to the road unasked ----
+    def test_off_the_road_is_for_the_companion_speaker_only(self):
+        els, osric = exchange.parse(step0()), exchange.parse(step1())
+        self.assertIn(exchange.OFF_THE_ROAD, exchange.rules(els, off_road=True))
+        self.assertNotIn(exchange.OFF_THE_ROAD, exchange.rules(osric, off_road=True))     # never in the townsperson's prompt
+        self.assertEqual(exchange.rules(osric, off_road=True), exchange.rules(osric))
+
+    def test_off_the_road_off_is_the_old_paragraph_byte_for_byte(self):
+        for a in (exchange.parse(step0()), exchange.parse(step1())):
+            self.assertEqual(exchange.rules(a, "KNOWN.", ["food"], "WEATHER.", follow=True, off_road=False),
+                             exchange.rules(a, "KNOWN.", ["food"], "WEATHER.", follow=True))
+            self.assertNotIn("how far you have come", exchange.rules(a))
+
+    def test_off_the_road_still_lets_her_answer_when_asked(self):
+        self.assertIn("if you are asked about it, answer", exchange.OFF_THE_ROAD)
+        self.assertNotIn("town", exchange.OFF_THE_ROAD)      # no made-up fact about how long she has been here
+
     def test_last_step_closes(self):
         x = step0()["exchange"]
         x.update(step=2, transcript=[{"who": "Osric", "text": OPENER}, {"who": "Elspeth Vale", "text": "Weary enough."},
@@ -176,6 +193,18 @@ class Handler(unittest.TestCase):
 
     def rec(self):
         return next(x for x in self.logs if x.get("event") == "exchange")
+
+    def test_off_the_road_follows_its_own_switch(self):   # rumour step C5
+        self.assertFalse(brain.CFG.get("companion_off_the_road"))                     # default: off = as before
+        self.assertTrue(self.ask(step0(), "It is good to see you too, Osric.")["ok"])
+        self.assertNotIn("how far you have come", self.prompt())
+        with mock.patch.dict(brain.CFG, {"companion_off_the_road": True}):
+            self.assertTrue(self.ask(step0(), "It is good to see you too, Osric.")["ok"])
+            self.assertIn("Do not bring up the road, your journey or how far you have come yourself", self.prompt())
+            body = step1()
+            body.update(persona_key="townsfolk", persona_vars={"name": "Osric", "role": "tanner", "town": "Britain", "trade": "vendor"})
+            self.assertTrue(self.ask(body, "Then rest a while.")["ok"])
+            self.assertNotIn("how far you have come", self.prompt())                   # the townsperson's prompt: never
 
     def test_ok_line(self):
         out = self.ask(step0(), "Weary enough, Osric. The road was long.")

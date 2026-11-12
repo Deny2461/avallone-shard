@@ -75,6 +75,11 @@ public class AiLedger : GenericPersistence
     // topics is HELD, never sent and never dropped. It is acceptance, not the brain's on/off switch for topics.
     public static bool TopicsIngest { get; private set; }
     public static int TopicsHeld { get; private set; }
+
+    // Rumour step, Part A (Codex design R2): the same rule for a second kind of record. True only while the brain this
+    // shard delivers to has said its ingest accepts "rumour_corrected" rows. False -> no correction is taken
+    // (Corrections.Ready) and a queued correction row is HELD - never sent to a brain that would refuse it, never dropped.
+    public static bool CorrectionsIngest { get; private set; }
     public static int OutboxCount => _outbox.Count;
     public static int MaxOutbox { get; private set; }
     public static long SavedEpoch => _savedEpoch;
@@ -197,10 +202,15 @@ public class AiLedger : GenericPersistence
         State = LedgerState.Starting;
         Reconciled = false;
         TopicsIngest = false;
+        CorrectionsIngest = false;
         TopicsHeld = 0;
     }
 
     internal static void SetTopicsIngestForTests(bool on) => TopicsIngest = on;
+    internal static void SetCorrectionsIngestForTests(bool on) => CorrectionsIngest = on;
+
+    // Which brain capability a queued row needs before it may be sent: 0 none, 1 talked-with topics, 2 corrections.
+    internal static int Need(LedgerEvent e) => CarriesTopics(e) ? 1 : e.Kind == "rumour_corrected" ? 2 : 0;
 
     internal static bool CarriesTopics(LedgerEvent e) =>
         e.Kind == "talked_with" && e.FactsJson != null && e.FactsJson.Contains("\"topics\"", StringComparison.Ordinal);
@@ -209,39 +219,54 @@ public class AiLedger : GenericPersistence
     // Codex step 2 code R1 (S2-C1): even with a confirmed ingest, a batch never carries an ordinary row AFTER a topic row.
     // The confirmation describes the brain that answered last, not necessarily the one that gets this batch; if an older
     // brain refuses the topic rows they are kept (SendAsync), and nothing later in the queue has then overtaken them.
-    internal static int SendableCount(System.Collections.Generic.IReadOnlyList<LedgerEvent> outbox, int batchSize, bool topicsIngest)
+    // Rumour step, Part A: the rule is the same for correction rows and their own capability, and a batch never mixes
+    // the two kinds of special row (each is judged by its own answer).
+    internal static int SendableCount(
+        System.Collections.Generic.IReadOnlyList<LedgerEvent> outbox, int batchSize, bool topicsIngest, bool correctionsIngest = false
+    )
     {
         var n = Math.Min(batchSize, outbox.Count);
-        if (topicsIngest)
-        {
-            var seenTopics = false;
-            for (var i = 0; i < n; i++)
-            {
-                if (CarriesTopics(outbox[i]))
-                {
-                    seenTopics = true;
-                }
-                else if (seenTopics)
-                {
-                    return i;
-                }
-            }
-
-            return n;
-        }
-
+        var special = 0; // the capability the special rows already in this batch need
         for (var i = 0; i < n; i++)
         {
-            if (CarriesTopics(outbox[i]))
+            var need = Need(outbox[i]);
+            if (need != 0 && !(need == 1 ? topicsIngest : correctionsIngest))
             {
-                return i;
+                return i; // held: nothing goes out past it
             }
+
+            if (special != 0 && need != special)
+            {
+                return i; // after a special row, only more rows of that same kind
+            }
+
+            special = need;
         }
 
         return n;
     }
 
     internal static int OutboxCountForTests => _outbox.Count;
+    internal static System.Collections.Generic.IReadOnlyList<LedgerEvent> OutboxForTests => _outbox;
+
+    // Tests only: what a world save writes for the outbox, read back the way a load reads it - the live outbox is put
+    // back afterwards. Returns the rows as loaded.
+    internal static List<LedgerEvent> RoundTripForTests()
+    {
+        var keep = new List<LedgerEvent>(_outbox);
+        var (savedEpoch, savedSeq) = (_savedEpoch, _savedSeq);
+        var ledger = _instance ?? new AiLedger();
+        var writer = new BufferWriter(true);
+        ledger.Serialize(writer);
+        var bytes = writer.Buffer.AsSpan(0, (int)writer.Position).ToArray();
+        _outbox.Clear();
+        ledger.Deserialize(new BufferReader(bytes));
+        var loaded = new List<LedgerEvent>(_outbox);
+        _outbox.Clear();
+        _outbox.AddRange(keep);
+        (_savedEpoch, _savedSeq) = (savedEpoch, savedSeq);
+        return loaded;
+    }
 
     // Tests only: the real delivery path against an in-process HTTP handler.
     internal static void SetHttpForTests(HttpMessageHandler handler) =>
@@ -323,9 +348,13 @@ public class AiLedger : GenericPersistence
         }
     }
 
-    private sealed record ReconcileReply(bool Ok, string Verdict, int RolledBack, string Reason, string Error, int TalkedWithTopics = 0);
+    private sealed record ReconcileReply(
+        bool Ok, string Verdict, int RolledBack, string Reason, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0
+    );
 
-    private sealed record IngestReply(bool Ok, string[] Acked, string[] Rejected, string Error, int TalkedWithTopics = 0);
+    private sealed record IngestReply(
+        bool Ok, string[] Acked, string[] Rejected, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0
+    );
 
     // Awaits resume on the game thread (ModernUO's EventLoopContext), so state is only touched there.
     private static async Task ReconcileAsync()
@@ -353,6 +382,7 @@ public class AiLedger : GenericPersistence
             }
 
             TopicsIngest = reply.TalkedWithTopics == 1;
+            CorrectionsIngest = reply.RumourCorrected == 1;
 
             if (reply.Verdict == "conflict")
             {
@@ -388,7 +418,7 @@ public class AiLedger : GenericPersistence
         {
             // Step 2: a row that carries topics goes only to an ingest that has confirmed it understands them. With
             // none sendable the batch is empty - that still asks the brain, and its answer re-reads the capability.
-            var take = SendableCount(_outbox, BatchSize, TopicsIngest);
+            var take = SendableCount(_outbox, BatchSize, TopicsIngest, CorrectionsIngest);
             var batch = _outbox.GetRange(0, take);
             var events = batch.ConvertAll(e => new
             {
@@ -415,12 +445,16 @@ public class AiLedger : GenericPersistence
             // A refusal of a topic row by a brain that does not is not a verdict on the row - the brain was replaced or
             // rolled back while the shard ran. Such a row is kept and held; only a refusal by a brain that confirms
             // topic support (a genuinely bad row), or of any other row, removes it.
+            // Rumour step, Part A: the same for a correction row and the answer's "rumour_corrected".
             var confirms = reply.TalkedWithTopics == 1;
+            var confirmsCorrections = reply.RumourCorrected == 1;
             var done = new HashSet<string>(reply.Acked ?? []);
             var kept = 0;
             foreach (var id in reply.Rejected ?? [])
             {
-                if (!confirms && batch.Exists(e => e.EventId == id && CarriesTopics(e)))
+                var row = batch.Find(e => e.EventId == id);
+                var need = row == null ? 0 : Need(row);
+                if (need == 1 && !confirms || need == 2 && !confirmsCorrections)
                 {
                     kept++;
                     continue;
@@ -433,16 +467,18 @@ public class AiLedger : GenericPersistence
             _outbox.RemoveAll(e => done.Contains(e.EventId));
             _warnedDown = false;
             TopicsIngest = confirms;
+            CorrectionsIngest = confirmsCorrections;
             if (kept > 0)
             {
                 logger.Warning(
-                    "Avallone memory: {Kept} talked_with event(s) with topics were refused by a brain that does not accept " +
-                    "them (replaced or rolled back?). KEPT, not dropped",
+                    "Avallone memory: {Kept} event(s) of a newer kind (talked-with topics / rumour corrections) were refused by " +
+                    "a brain that does not accept them (replaced or rolled back?). KEPT, not dropped",
                     kept
                 );
             }
 
-            if ((take == 0 || kept > 0) && !TopicsIngest)
+            var headNeed = _outbox.Count > 0 ? Need(_outbox[0]) : 0;
+            if ((take == 0 || kept > 0) && (headNeed == 1 && !TopicsIngest || headNeed == 2 && !CorrectionsIngest))
             {
                 TopicsHeld = _outbox.Count;
                 _nextTry = Core.Now + TimeSpan.FromSeconds(30);
@@ -450,7 +486,8 @@ public class AiLedger : GenericPersistence
                 {
                     _warnedHeld = true;
                     logger.Warning(
-                        "Avallone memory: {Held} event(s) HELD - the brain's ingest does not accept talked_with topics. " +
+                        "Avallone memory: {Held} event(s) HELD - the brain's ingest does not accept the record at the head of " +
+                        "the queue (talked-with topics or a rumour correction). " +
                         "Nothing is dropped; they go out when a brain that accepts them answers",
                         _outbox.Count
                     );
@@ -484,6 +521,7 @@ public class AiLedger : GenericPersistence
         // Codex step 2 code R1 (S2-C1): a brain that did not answer may not be the brain that confirmed topic support.
         // Unconfirmed until an answer says so again; the next batch stops at the first topic row and re-reads it.
         TopicsIngest = false;
+        CorrectionsIngest = false;
         _nextTry = Core.Now + TimeSpan.FromSeconds(30);
         if (!_warnedDown)
         {
@@ -496,7 +534,8 @@ public class AiLedger : GenericPersistence
     public static string Describe() =>
         $"memory {State} ({StateReason}); epoch {Epoch}, last event {Seq}, outbox {_outbox.Count}/{MaxOutbox}; " +
         $"loaded save held events up to {_savedEpoch}-{_savedSeq}" +
-        $"; talked-with topics: ingest {(TopicsIngest ? "confirmed" : "not confirmed")}{(TopicsHeld > 0 ? $", {TopicsHeld} HELD" : "")}";
+        $"; talked-with topics: ingest {(TopicsIngest ? "confirmed" : "not confirmed")}; rumour corrections: ingest " +
+        $"{(CorrectionsIngest ? "confirmed" : "not confirmed")}{(TopicsHeld > 0 ? $"; {TopicsHeld} HELD" : "")}";
 
     public static async Task<string> BrainStatusAsync(Guid? npcId, Guid? charId)
     {

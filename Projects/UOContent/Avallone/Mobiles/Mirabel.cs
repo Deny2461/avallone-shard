@@ -183,6 +183,9 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
             follow = null;
         }
 
+        var openingRevision = Server.Avallone.AI.Exchange.RevisionOf(from);   // Codex A2-R1: see TownsfolkTalk
+        var fix = Server.Avallone.Rumours.Corrections.Take(this, from, openingRevision); // rumour step, Part A
+
         var request = new AiRequest(_aiId, AiIdentity.GetOrCreate(from), null, text, AiPriority.Conversation)
         {
             PersonaKey = PersonaKey,
@@ -191,12 +194,13 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
             Rumours = Server.Avallone.Rumours.RumourSpeech.Ask(this, from, text, history.Count == 0, follow, "Britain"),
             Named = Server.Avallone.Named.NamedNpcs.Ask(this, from), // Phase 5c: her memories of this visitor
             Standing = Relations.Standing(this, from, "Britain"), // 5c-2 2b: same town as her gossip
-            Party = Server.Avallone.AI.TravelParty.For(this, from) // Stage A1: companions + pets she can see
+            Party = Server.Avallone.AI.TravelParty.For(this, from), // Stage A1: companions + pets she can see
+            Falling = RealWeather.Word(this), // rumour step C3
+            Correction = Server.Avallone.Rumours.Corrections.AskFor(fix)
         };
 
         Direction = GetDirectionTo(from);
 
-        var openingRevision = Server.Avallone.AI.Exchange.RevisionOf(from);   // Codex A2-R1: see TownsfolkTalk
         var reply = await AiGateway.RequestAsync(request);
 
         // Stale-reply protection: the player logged out, died, or walked off while she was thinking.
@@ -214,17 +218,23 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
                 return; // a gossip line that failed its name check is not said
             }
 
+            // Part A: the accepting line only once the correction is in the saved outbox; else the ordinary reply.
+            spoken = Server.Avallone.Rumours.Corrections.Commit(this, from, fix, reply) ?? spoken;
             Direction = GetDirectionTo(from);
             Say(spoken);
             Server.Avallone.AI.TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency");
             // Stage A2: if she spoke to the player's companion by name, the companion may answer (switch avallone.ai.exchanges).
-            Server.Avallone.AI.Exchange.AfterReply(this, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop", openingRevision);
+            Server.Avallone.AI.Exchange.AfterReply(
+                this, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop",
+                openingRevision, Server.Avallone.AI.Exchange.ReactSortOf(reply) // rumour step C1
+            );
             Remember(history, "player", text);
             Remember(history, "npc", Server.Avallone.AI.TravelParty.ForHistory(Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken), request.Party));
             Server.Avallone.Named.NamedNpcs.OnExchange(this, from, text); // the visitor's own words, for this visit's notes
             Server.Avallone.Named.NamedNpcs.OnDelivered(this, from, reply.MemoryCards); // 5c-2 2a: which cards were offered
             Server.Avallone.AI.Relations.Conduct(this, from, reply); // 2b: warmth -20 for a slur, once a day
             _followRumour[from] = Server.Avallone.Rumours.RumourSpeech.FollowId(reply);
+            Server.Avallone.Rumours.Corrections.AfterReply(this, from, reply, openingRevision); // Part A: a ticket, or none
             return;
         }
 
