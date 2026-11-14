@@ -10,7 +10,7 @@ fun.
 flowchart LR
     P0["0 · Harness ✅"] --> P1["1 · First talking NPC ✅"] --> P2["2 · Personas & lore ✅"] --> P3["3 · A companion ✅"]
     P3 --> P4["4 · Memory that lasts ✅"] --> P5["5 · Named NPCs & rumours<br/>(mostly ✅, more coming)"]
-    P5 --> P6["6 · Enemies 💡"] --> P7["7 · Daily life 💡"] --> P8["8 · Quests 💡"]
+    P5 --> P6["6 · Daily life 💡"] --> P7["7 · Enemies 💡"] --> P8["8 · Quests 💡"]
     P8 --> P9["9 · Economy 💡"] --> P10["10 · Society 💡"] --> P11["11 · Settlements 💡"]
 ```
 
