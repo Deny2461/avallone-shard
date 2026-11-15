@@ -1,5 +1,6 @@
 {
   "_doc": "Phase 5a rumour network. Hours are PLAYED hours (the clock runs only while a player is logged in). the owner can switch any deed type off here (enabled false) without a code change; the brain re-reads this file when it changes.",
+  "weighted_spread": true,
   "speed": 1.0,
   "distort_chance": 0.35,
   "max_distortions": 2,

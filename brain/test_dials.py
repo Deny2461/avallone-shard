@@ -178,11 +178,21 @@ class Compute(Rig):
         self.assertTrue(-100 <= d["trust"] <= 100)
 
     def test_respect_counts_this_players_arrived_deeds_up_to_the_cap(self):
+        # Step 2e (design §9.6): respect now comes from the town's reputation - 5 per unit of the FADED, DAMPED renown
+        # score (repeats of one deed type within a day count 1, 1/2, 1/4, then 0), capped at 15. Five kills in one
+        # evening: 5 x (1 + 0.5 + 0.25), slightly faded. Kills on separate days are not damped and reach the cap.
         for i in range(5):
             self.deed("kill_notable", 10 * H, subject=f"wyrm{'abcde'[i]}")
         d = dials.compute(self.req(fame=0), self.led, self.r)
-        self.assertEqual(d["sources"]["deeds"], 15.0)
+        self.assertGreater(d["sources"]["deeds"], 8.0)
+        self.assertLessEqual(d["sources"]["deeds"], 8.75)
         self.assertEqual(dials.compute(self.req(fame=0, char=OTHER), self.led, self.r)["sources"]["deeds"], 0.0)
+
+    def test_respect_from_deeds_on_separate_days_reaches_the_cap(self):
+        for i in range(1, 5):     # 25 h apart (outside the 24 h repeat window), the last one just now
+            self.deed("kill_notable", i * 25 * H, subject=f"wyrm{'abcde'[i]}")
+        d = dials.compute(self.req(fame=0, pt=100 * H), self.led, self.r)
+        self.assertEqual(d["sources"]["deeds"], 15.0)   # 5 x (1 + 0.85 + 0.70 + 0.55) = 15.5, capped
 
     def test_warmth_one_per_day_fades_and_ignores_pre_2b_rows(self):
         rest = dials.traits(NPC, "townsfolk", "provisioner", "vendor", "Britain")["warmth_rest"]

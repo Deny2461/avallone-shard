@@ -3,11 +3,12 @@ using Xunit;
 
 namespace UOContent.Tests;
 
+// Step 2e: in the sequential collection - CommandWordTests switches GameCommands.BankWordsNeedBanker off and on.
+[Collection("Sequential UOContent Tests")]
 public class GameCommandsTests
 {
     // Keyword ids as the client sent them for these lines (shard log, 2026-09-28 to 2026-10-07).
     [Theory]
-    [InlineData(new[] { 0x2 })]                  // bank
     [InlineData(new[] { 0x15D, 0x168 })]         // all kill
     [InlineData(new[] { 0xE8, 0x163, 0x16C })]   // all follow me
     [InlineData(new[] { 0x16F })]                // bob stay
@@ -15,10 +16,16 @@ public class GameCommandsTests
     [InlineData(new[] { 0x7 })]                  // guards
     [InlineData(new[] { 0x8 })]                  // stable
     [InlineData(new[] { 0x9 })]                  // claim
-    [InlineData(new[] { 0x3 })]                  // check 750000
     [InlineData(new[] { 0x3C })]                 // vendor buy
-    [InlineData(new[] { 0x2, 0x4 })]             // "... join me?bank"
     public void RealCommandsStayWithTheGame(int[] keywords) => Assert.True(GameCommands.AnyCommand(keywords));
+
+    // Step 2e (design §8.8 E2; the owner, chat, 2026-11-12): bank words are no longer a command on their own - only with a
+    // banker within 12 tiles, decided in TownsfolkTalk.IsGameCommand (CommandWordTests). These were in the list above.
+    [Theory]
+    [InlineData(new[] { 0x2 })]                  // bank
+    [InlineData(new[] { 0x3 })]                  // check 750000
+    [InlineData(new[] { 0x2, 0x4 })]             // "... join me?bank"
+    public void BankWordsAloneAreNotACommand(int[] keywords) => Assert.False(GameCommands.AnyCommand(keywords));
 
     [Theory]
     [InlineData(new[] { 0x180 })]                // what about taming dragons
@@ -64,7 +71,7 @@ public class GameCommandsTests
     [InlineData("vendor buy", new[] { 0x3C }, false)]
     [InlineData("Mirabel buy", new[] { 0x171 }, false)]
     [InlineData("I want to buy", new[] { 0x171 }, false)]
-    [InlineData("where can I bank and buy?", new[] { 0x2, 0x171 }, false)]   // a real non-trade command: still the game's
+    [InlineData("where can I bank and buy?", new[] { 0x2, 0x171 }, true)]    // Step 2e: "bank" alone is no command now - a question is talk
     [InlineData("where is the forge", new[] { 0x15 }, false)]                 // no trade word at all
     public void BuyingSentencesAreTalk(string line, int[] keywords, bool talk) =>
         Assert.Equal(talk, GameCommands.OnlyTradeTalk(keywords, line));
@@ -98,7 +105,7 @@ public class GameCommandsTests
     [InlineData("vendor sell", new[] { 0x14D }, false, false)]
     [InlineData("vendor buy some wine", new[] { 0x3C }, false, false)]
     // a real non-trade command is still the game's
-    [InlineData("I want to buy a bank box", new[] { 0x2, 0x171 }, false, false)]
+    [InlineData("I want to buy a bank box", new[] { 0x2, 0x171 }, false, true)]   // Step 2e: "bank" alone is no command now
     [InlineData("guards! I want to buy", new[] { 0x7, 0x171 }, false, false)]
     [InlineData("I want to see you", new[] { 0x180 }, false, false)]           // no trade word at all
     // questions are talk as before, named or not

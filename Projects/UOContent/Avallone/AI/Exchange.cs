@@ -53,6 +53,12 @@ public static class Exchange
     // one at a time, the player's words always win, the replies-between and NPC-rest spacing, a free model, staleness.
     // It is never extended and never recorded as "talked with".
     public static bool Reactions { get; private set; }
+
+    // Step 2e D1 (rumour design C2 item 9; design §8.6): a made-up story the townsperson just told may be the subject of
+    // an exchange with the companion it named. Switch avallone.ai.madeUpHandoff.
+    public static bool MadeUpHandoff { get; set; } = true;
+
+    private static readonly Regex MadeUpId = new(@"^mu-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-z]{1,10}$", RegexOptions.CultureInvariant);
     public const int ReactSorts = 6;   // party.ANGLES / exchange.REACTIONS in the brain
     public static TimeSpan NpcRest { get; set; } = TimeSpan.FromMinutes(4);   // per townsperson, booked before the first call
     public static int RepliesBetween { get; set; } = 2;                       // NPC replies a player hears between exchanges
@@ -124,6 +130,7 @@ public static class Exchange
         public bool Extended;           // one extra line was granted because the closing line was a question
         public int? React;              // C1: a one-line reaction of this fixed sort - the transcript then stays EMPTY
         public int OpeningChars;        // C1: only the LENGTH of the line she answers (for the pause), never its words
+        public ExchangeStory Story;     // Step 2e D1: the made-up story that is this exchange's subject (typed id only)
         // Step 2 (Codex S2-D2): the subjects of the lines REALLY spoken. Replaced only after Speak succeeds; a reply that
         // is refused, late, pre-empted or thrown away by the last check never touches it. null = nothing committed.
         public string[] Topics;
@@ -167,6 +174,7 @@ public static class Exchange
         MaxLines = Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangeMaxLines", MaxSteps), 1, MaxSteps);
         MemoryOn = ServerConfiguration.GetOrUpdateSetting("avallone.ai.npcMemory", false);
         Reactions = ServerConfiguration.GetOrUpdateSetting("avallone.ai.reactions", false);
+        MadeUpHandoff = ServerConfiguration.GetOrUpdateSetting("avallone.ai.madeUpHandoff", true);
         EventSink.Speech += OnSpeech;
         CommandSystem.Register("Exchanges", AccessLevel.Administrator, Exchanges_OnCommand);
     }
@@ -289,7 +297,8 @@ public static class Exchange
     // and whose prompt really asked for that sort of remark). The caller passes it only for a gossip turn - never for a
     // decency or shop-line turn. With the reactions switch on, such an excluded turn may start a one-line reaction.
     public static void AfterReply(
-        Mobile npc, Mobile from, TravelParty.PartyAsk party, string spoken, bool excluded, int openingRevision, int? reactSort = null
+        Mobile npc, Mobile from, TravelParty.PartyAsk party, string spoken, bool excluded, int openingRevision, int? reactSort = null,
+        RumourInfo rumour = null
     )
     {
         if (from is not PlayerMobile pm || npc == null)
@@ -300,7 +309,9 @@ public static class Exchange
         try
         {
             var since = _since.TryGetValue(pm.Serial, out var n) ? n : RepliesBetween;
-            _since[pm.Serial] = TryStart(npc, pm, party, spoken, excluded, since, openingRevision, reactSort) ? 0 : Math.Min(since + 1, 1000);
+            var story = MadeUpHandoff ? MadeUpStory(rumour) : null;
+            _since[pm.Serial] = TryStart(npc, pm, party, spoken, excluded && story == null, since, openingRevision,
+                story != null ? null : reactSort, story) ? 0 : Math.Min(since + 1, 1000);
             if (_since.Count > 5000)
             {
                 _since.Clear(); // bound memory; losing counts only allows an exchange a little sooner
@@ -312,9 +323,38 @@ public static class Exchange
         }
     }
 
+    // Step 2e D1 (Codex design R1-7, R2 Q5; code R1-2): only a reply that FULLY delivered exactly one travelling made-up
+    // story, with nothing else on offer beside it, hands that story on - and "nothing else on offer" is the BRAIN's
+    // verdict (rumour.Handoff), because the reply's ids only say what was told, not what was offered.
+    internal static ExchangeStory MadeUpStory(RumourInfo rumour)
+    {
+        if (rumour?.Delivered is not { Length: 1 } list || list[0] == null || rumour.Ids is not { Length: > 0 } ids ||
+            rumour.Handoff is not { Source: "made_up" } handoff || handoff.Story != list[0].Story)
+        {
+            return null;
+        }
+
+        var d = list[0];
+        if (d.Story == null || !MadeUpId.IsMatch(d.Story) || d.Hk == null || !d.Hk.StartsWith("mk:", StringComparison.Ordinal) ||
+            string.IsNullOrEmpty(d.Town))
+        {
+            return null;
+        }
+
+        foreach (var id in ids)
+        {
+            if (id != d.Story)
+            {
+                return null;      // a mixed offer: never handed on
+            }
+        }
+
+        return new ExchangeStory(d.Story, "made_up", Server.Avallone.Rumours.PlayedClock.Seconds, d.Town);
+    }
+
     private static bool TryStart(
         Mobile npc, PlayerMobile pm, TravelParty.PartyAsk party, string spoken, bool excluded, int since, int openingRevision,
-        int? reactSort = null
+        int? reactSort = null, ExchangeStory story = null
     )
     {
         // C1: an excluded turn starts nothing - unless it is a gossip turn with a valid sort and reactions are on.
@@ -353,10 +393,16 @@ public static class Exchange
                 Roster = party.Roster ?? [],
                 Steps = react != null ? 1 : Math.Clamp(PickLength(), 1, Math.Clamp(MaxLines, 1, MaxSteps)),
                 React = react,
-                OpeningChars = spoken.Length
+                OpeningChars = spoken.Length,
+                Story = story
             };
             run.DeadlineAt = now + (long)DeadlineFor(run.Steps).TotalMilliseconds;
-            if (react == null)
+            if (react == null && story != null)
+            {
+                // Step 2e D1: the subject is the made-up story; its words come from the brain's store, never this reply.
+                run.Transcript.Add(new ExchangeLine(b.Name, "[a piece of town talk]"));
+            }
+            else if (react == null)
             {
                 // What the NPC said aloud, with a pet's owner-given name masked as in its stored history (Codex A1-1).
                 run.Transcript.Add(new ExchangeLine(b.Name, TravelParty.ForHistory(spoken, party)));
@@ -522,7 +568,9 @@ public static class Exchange
                         run.Roster,
                         step == run.Steps - 1,
                         run.React != null ? null : KnownNow(other.AiId),      // ... and asks for no memory read
-                        run.React
+                        run.React,
+                        // Step 2e D1: every step, so the brain replaces line 0 - with the CURRENT played clock (code R1-3)
+                        run.Story == null ? null : run.Story with { Pt = Server.Avallone.Rumours.PlayedClock.Seconds }
                     )
                 };
 

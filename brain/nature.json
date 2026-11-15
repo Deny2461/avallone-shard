@@ -697,5 +697,9 @@
   "My grandmother swings a sword better than you, and she's been dead ten years.",
   "Were you raised by ettins?",
   "You've less sense than a slime."
- ]
+ ],
+  "_gossip_habits": "Step 2e (design A3; the owner, chat, 2026-11-12: - gossip 1 in 4, cautious 1 in 5, sceptic 1 in 6, the rest plain). gossip: twice the greeting-gossip chance; cautious: never volunteers gossip on a greeting (tells when asked); sceptic: a fixed line of doubt, written by code, after a story it really told.",
+  "gossip_habits": [{"key": "gossip", "weight": 0.25}, {"key": "cautious", "weight": 0.2}, {"key": "sceptic", "weight": 0.1667}, {"key": "plain", "weight": 0.3833}],
+  "_backgrounds": "Step 2e (design §8.5): unasked, a background is in a turn's prompt for `share` of turns, never two running, and never on a turn whose flourish habit is shown (one shared slot). Asked about (where from / before / how long), it is always in. enabled false = no background lines.",
+  "backgrounds": {"enabled": true, "share": 0.15}
 }

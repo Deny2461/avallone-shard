@@ -126,6 +126,9 @@ class RumourTests(unittest.TestCase):
     SERIOUS = ("murder", "died_notable", "kill_notable", "tame_notable", "pacified", "fished_bottle", "died_pathetic")
 
     def test_serious_kinds_render_the_same_at_every_hop(self):
+        # Step 2e: lighter stories no longer reach far (weighted spread, test_spread.py); this test is about the wording
+        # never changing over MANY hops, so it lets every kind travel the whole map.
+        self.r.cfg["weighted_spread"] = False
         for n, typ in enumerate(self.SERIOUS):
             towns, hops = set(), 0
             for i in range(6):
@@ -281,8 +284,10 @@ class RumourTests(unittest.TestCase):
         horizon = self.r.horizon()
         for i in range(3):
             self.deed("kill_notable", i * H)
-        late = horizon + 10 * H
-        self.assertEqual(self.r._deeds(late), [])                 # outside the horizon: not even read
+        # Step 2e (design §12.1): reads start on a bucket boundary at or before pt - horizon, so "outside" now means
+        # outside the whole bucket the horizon falls in.
+        late = horizon + rumours.BUCKET_S + 10 * H
+        self.assertEqual(self.r._deeds(late), [])                 # outside the horizon's bucket: not even read
         self.assertEqual(self.r.epithets(late).get(WREN), ["Dragonbane"])  # but still counted, by SQL
 
     def test_tick_never_marks_unshown_arrivals(self):
@@ -300,6 +305,10 @@ class RumourTests(unittest.TestCase):
         self.r.tick(self.r.horizon() + H)
         db = self.led.db
         self.assertEqual(db.execute("SELECT COUNT(*) FROM rumour_arrivals").fetchone()[0], 0)
+        # Step 2e (design §11.2, Codex design R6): a GM drop outlives the horizon - it must keep the story out of town
+        # reputation too - and is collected only after drop_retention_s() from the story's first deed.
+        self.assertEqual(db.execute("SELECT COUNT(*) FROM rumour_drops").fetchone()[0], 1)
+        self.r.tick(self.r.drop_retention_s() + H)
         self.assertEqual(db.execute("SELECT COUNT(*) FROM rumour_drops").fetchone()[0], 0)
 
     def test_tick_logs_each_arrival_once(self):

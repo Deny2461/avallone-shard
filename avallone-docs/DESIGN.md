@@ -515,9 +515,11 @@ flowchart TB
 - **Names are bound safely.** The model never sees a player's name directly in a rumour. It gets a one-time
   token, and the shard puts in the character's *current* name when the line is spoken. A reply that names
   any other real player is refused.
-- **Manners.** One story per news reply. Unprompted gossip comes only on a real greeting, about one time in
-  four, as a teaser. Each NPC volunteers something at most once an hour, and never tells the same player
-  the same story twice within two hours.
+- **Manners.** One story per news reply. Unprompted gossip comes only on a real greeting, as a teaser. Each NPC
+  volunteers something at most once an hour. Once a player has really been told a story, by anyone, no NPC volunteers
+  it to them again on a greeting unless it has changed (below). Asked for news, an NPC never repeats one the player
+  heard in the last few minutes (`avallone.rumours.recentBlockMinutes`, default 10); after that a heard story is
+  a quarter as likely to be picked, not ruled out, so the news does not run in streaks.
 - **Exposure** (which stories have truly reached a town) is one shared calculation. Town unease and
   respect both read from it.
 
@@ -574,6 +576,50 @@ The invented gossip used to be one random line per reply. Now most of it behaves
 - **Counted as heard only when told.** A made-up story is recognised by its own distinctive words. If the reply does not
   show it, the brain says it in a fixed wording and counts that.
 - **Never about a player.** Made-up stories name no real person, and cannot be corrected.
+
+### Who has heard what
+
+- **A heard record.** When an NPC has *spoken* a story to a player (not merely been offered it), the shard writes a
+  private record to the ledger: which story, which version, which town. Like every ledger record it is undone by a
+  world restore.
+- **Versions.** A story's version is the exact sentence that tells it in that town. A corrected or newly garbled story
+  is a new version, so it is news again; the same story told the same way is not.
+- **Old and new mix safely.** As with corrections, the shard sends heard records only to a brain that has said it
+  understands them, and holds them otherwise.
+
+### How far a story travels
+
+- **Weight.** A small deed stays in its own town and the towns one road away; a bigger one reaches every town within a
+  couple of hours' travel; the biggest reach everywhere, and faster.
+- **Fixed played days.** Stories are grouped into fixed 24-played-hour buckets, so the same deeds always make the same
+  stories however far back a read looks.
+
+### Reputation
+
+- **Worked out, not stored.** A town's view of a player comes from the stories that reached it in the last seven played
+  days: renown, dread and jest, from the stories' original facts, fading over the week.
+- **What it changes.** Respect rises with renown and trust falls with dread, within a cap. An NPC who does not know the
+  player yet may get one code-written sentence about a single real story it has heard.
+
+### Asking about yourself, and the NPC's choice
+
+- **About you.** A question about what people say of the speaker gets that player's own stories, one at a time; asked
+  again, the NPC moves on to one not just told, and when there is none left it says so.
+- **The NPC decides whether to tell.** On any reply with a story on offer, the model must choose, in a fixed field,
+  "tell" or "keep". Only an explicit "tell" lets the code add a story: the plain sentence, a made-up story's fixed
+  wording, a teaser. Anything else counts as "keep". This replaced trying to recognise every way of saying "don't
+  talk about me" from a word list, which can never cover English. It controls what the code adds; the model's own
+  words are still checked and recorded as they are.
+
+### Townsfolk pasts and gossip habits
+
+- **A past for everyone.** Each ordinary townsperson gets a home, a former life and one past event from hand-written
+  lists, the first time one is needed, and keeps it for good (a world restore or a later list edit does not change it).
+  No two townsfolk of one town share a past event until the list runs out. It is in the prompt when they are asked
+  about themselves, and only now and then otherwise. *(Sample lists in this copy.)*
+- **Gossip habits.** Some townsfolk are gossips (twice as likely to volunteer something), some cautious (never on a
+  greeting, but they answer when asked), some sceptics (a fixed line of doubt, written by code, after a story they
+  really told).
 
 ## 13. Companions
 
@@ -652,8 +698,8 @@ Avallónë also tunes the game itself. Each rule is a setting in `AvalloneRules`
 
 ## 17. Testing and review
 
-- **Tests:** about 190 C# tests for the Avallónë code inside a content test suite of about 1,650, and about
-  400 brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
+- **Tests:** about 340 C# tests for the Avallónë code inside a content test suite of about 1,950, and about
+  820 brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
   revision; it needs the private history, so it is not in the public copy.
 - **Model trials:** a harness replays fixed conversations against candidate models, measuring speed and
   checking persona, era and refusal behaviour, before any model change.
@@ -661,7 +707,9 @@ Avallónë also tunes the game itself. Each rule is a setting in `AvalloneRules`
   on both the brain and in game.
 - **Two-step review:** designs and changes bound for the live shard get an independent review (by a second
   AI, Codex), normally before they go live; a few small changes have gone live on the owner's call before
-  their review round. Each finding is either fixed or answered.
+  their review round. Codex does not just read: it rebuilds the change, writes its own probes and reproduces each
+  problem through the real code before reporting it. Each finding is either fixed or answered, often over several
+  rounds.
 - **Canary first:** live changes go out with a runbook, a backup and a rollback, and get checked in play.
 
 ## 18. A worked example

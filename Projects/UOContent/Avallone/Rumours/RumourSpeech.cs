@@ -86,9 +86,21 @@ public static class RumourSpeech
 
     public static bool Enabled { get; private set; }
 
+    // Step 2e (design §8.1/§8.9): record a rumour_heard row for each story really spoken to a player. Off = the shard's
+    // short-term memory only, as before. Rows are written only to a brain that has confirmed it accepts the kind.
+    public static bool HeardLog { get; private set; }
+
+    private static readonly Regex HeardKey = new(
+        @"^(?:s:[1-9][0-9]{0,11}-[1-9][0-9]{0,11}@[0-9a-f]{16}|mk:[0-9a-f]{8})$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled
+    );
+
+    private static readonly Regex HeardTown = new(@"^[A-Za-z][A-Za-z' ]{0,29}$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+
     public static void Configure()
     {
         Enabled = ServerConfiguration.GetOrUpdateSetting("avallone.rumours.speak", true);
+        HeardLog = ServerConfiguration.GetOrUpdateSetting("avallone.rumours.heardLog", true);
         NpcUnpromptedGap = TimeSpan.FromMinutes(
             Math.Max(1, ServerConfiguration.GetOrUpdateSetting("avallone.rumours.unpromptedGapMinutes", 60))
         );
@@ -114,6 +126,7 @@ public static class RumourSpeech
     public static void ResetForTests(bool enabled)
     {
         Enabled = enabled;
+        HeardLog = enabled;    // Step 2e: the recording switch follows the test's speaking switch
         GreetRoll = () => 0;   // tests: the 1-in-4 roll always passes unless a test says otherwise
         GreetInBrain = false;  // tests: the shard-side roll, unless a test says otherwise
         _npcUnprompted.Clear();
@@ -122,6 +135,80 @@ public static class RumourSpeech
     }
 
     public static bool IsNews(string text) => !string.IsNullOrEmpty(text) && News.IsMatch(text);
+
+    public static bool IsAboutMe(string text) => TalksAboutMe(text) && Inquiry.IsMatch(text) && !IsStopTalk(text);
+
+    // A line that speaks of what is said about the speaker - a request, an order or a remark; Ask decides which.
+    internal static bool TalksAboutMe(string text) => !string.IsNullOrWhiteSpace(text) && AboutMe.IsMatch(text);
+
+    // Codex code R9 (third round on this routing - the approach changed from word lists and gaps to sentence SHAPE):
+    // an order comes at the START of a sentence or clause; a request to hear OPENS like a question or an ask. Both are
+    // judged at a clause start (line start, or after . ! ? ; : , or a dash), after optional fillers ("please", "just",
+    // "now", "oh", "look", "hey", "I beg you" ...). A vocative is its own clause: "Mady, what have you heard about me".
+    private const string ClauseStart = @"(?:^|[.!?;:,]|\s[-–—]+)\s*" +
+        @"(?:(?:please|just|now|so|and|but|oh|ah|well|look|listen|hey|friend|i said|i beg you)\W+)*";
+
+    private const string Apos = @"['’]";
+
+    // A request to hear: a question mark anywhere, or an ask-shaped opening - question words, "can/could/would/will you",
+    // "please tell me", negative questions ("don't you ...", "have you never ...", "haven't you ..."). Codex R9-1: the
+    // polite asks without a question mark.
+    private static readonly Regex Inquiry = new(
+        @"\?|" + ClauseStart + @"(?:what|what" + Apos + @"?s|whats|have|has|had|any|anything|did|do|does|is|are|am|was|" +
+        @"were|who|how|tell me|heard|hear|know|got|pray|is there|i wonder|i" + Apos + @"?d like to know|i want to know|" +
+        @"can you|could you|would you|will you|won" + Apos + @"?t you|may i|might i|don" + Apos + @"?t you|do you not|" +
+        @"haven" + Apos + @"?t you|hasn" + Apos + @"?t|didn" + Apos + @"?t you|isn" + Apos + @"?t|aren" + Apos + @"?t)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled
+    );
+
+    // Codex code R7 finding 1: "Don't talk about me" / "Stop talking about me" / "Please say nothing about me" asked for
+    // SILENCE, and plain telling then said their deed. A request to stop or not to gossip always wins: the line is an
+    // ordinary turn, never a gossip request - for the speaker and for a named player alike.
+    public static bool IsStopTalk(string text) =>
+        !string.IsNullOrWhiteSpace(text) && (StopTalk.IsMatch(text) || Halt.IsMatch(text));
+
+    // Codex code R10: a POLITE request to stop ("Could you stop talking about me?", "Would you mind not talking about me?")
+    // has its order mid-sentence. The deliberate bias from here on: when in doubt, SILENCE - a missed ask costs an ordinary
+    // reply, a missed stop tells the very gossip they asked to stop. So, ANYWHERE in the line:
+    // - stop / quit / cease + the closed modifiers + a speech word or gossip noun ("... could you stop talking ...");
+    // - "you (please) not/never" + speech ("Could you please not talk about me?");
+    // - mind / try / remember / promise / swear + (to) not/never + speech ("Would you mind not talking about me?").
+    // "don't" / "never" alone stay clause-start only (R9: "Have you never heard any gossip about me?" is a question).
+    private static readonly Regex Halt = new(
+        @"\b(?:stop|quit|cease)" + Modifiers + @"\s+" + Speech + @"\b" +
+        @"|\byou\s+(?:please\s+|kindly\s+|just\s+)?(?:not|never)" + Modifiers + @"\s+" + Speech + @"\b" +
+        @"|\b(?:mind|try|remember|promise|swear)\s+(?:to\s+)?(?:not|never)(?:\s+to)?" + Modifiers + @"\s+" + Speech + @"\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled
+    );
+
+    private const string Modifiers = @"(?:\s+you(?:\s+dare)?)?(?:\s+(?:ever|again|even|keep|go|all|this|that|these|those|" +
+        @"the|any|more|of|your|such|so|much|bother|be|a|it|with))*";
+
+    private const string Speech = @"(?:talk|speak|say|tell|gossip|spread|mention|repeat|blab|whisper|chatter|natter|prattl|" +
+        @"rumou?r|stor(?:y|ies)|tales?)\w*";
+
+    // An ORDER at a clause start: don't / do not / never / stop / quit / cease / no more, then only a CLOSED list of
+    // modifiers ("you", "you dare", ever, again, keep, go, all, this, the, any, more, of, your, so, much, bother, be ...),
+    // then a speech word or gossip noun. Codex R8: "Don't EVER talk", "Stop ALL THIS gossip", "Don't KEEP talking". Codex
+    // R9-2: a negative QUESTION is not an order - "Have you never heard any gossip" ("never" is mid-clause), "Don't you
+    // HAVE gossip" ("have" is not a modifier). Plus the fixed orders: say/tell/speak nothing, not a word, enough about
+    // me/that, keep (it) quiet/mum/silent/to yourself/between us, leave me out, hush, shut up.
+    private static readonly Regex StopTalk = new(
+        ClauseStart + @"(?:(?:don" + Apos + @"?t|dont|do not|never|stop|quit|cease|no more)" + Modifiers + @"\s+" + Speech +
+        @"|(?:say|tell|speak)\s+nothing|not\s+(?:a\s+)?(?:single\s+)?word|enough\s+(?:about|of)\s+(?:me|that)" +
+        @"|keep\s+(?:it\s+|that\s+|this\s+)?(?:quiet|mum|silent|to yourself|between us)|leave\s+me\s+out|hush|shut\s+up)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled
+    );
+
+    // Step 2e (the owner, chat, 2026-11-13): the speaker asking what is said of THEM. A talk word, then within the
+    // same sentence; or "my reputation"; or "am I known/famous". "Do you know me?" alone stays an ordinary question (her
+    // own memory of them answers it), and "about yourself" is about the NPC.
+    private static readonly Regex AboutMe = new(
+        @"\b(heard|hear|hearing|say|says|said|saying|talk|talking|told|rumou?rs?|news|tidings|tales?|stor(y|ies)|word|" +
+        @"gossip|whisper\w*|know|known)\b[^.?!]{0,40}?\b(about|of|regarding|concerning)\s+(me|myself)\b" +
+        @"|\bmy (reputation|renown|fame|deeds)\b|\b(am i|i['’]?m) (well[- ]known|known|famous|infamous|notorious)\b",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled
+    );
 
     public static bool IsGreeting(string text) => !string.IsNullOrEmpty(text) && Greeting.IsMatch(text);
 
@@ -163,9 +250,28 @@ public static class RumourSpeech
 
         string mode = null;
         var named = NamedIn(text, out var ambiguous);
+        var about = named?.Id ?? "";
+        if (IsStopTalk(text))
+        {   // Codex code R7 finding 1: asked for silence - an ordinary turn (no rumour block at all)
+            return null;
+        }
+
         if (named != null || ambiguous)
         {
             mode = "about";   // "Do you know Brynn?" (the owner, chat, 2026-10-30): gossip about that one person
+        }
+        else if (TalksAboutMe(text))
+        {   // Step 2e (the owner's play test 2; the owner, chat, 2026-11-13): is about the ASKER - their own
+            // stories, or "heard nothing of you" - never general gossip. A named player above still wins. Codex R9-1: a
+            // line about what is said of the speaker that is NOT an ask ("Folk talk about me too much.") is an ordinary
+            // turn - never "news" about everyone else.
+            if (!Inquiry.IsMatch(text))
+            {
+                return null;
+            }
+
+            mode = "about";
+            about = AiIdentity.TryGet(from, out var me) ? me.ToString() : "";
         }
         else if (IsNews(text))
         {
@@ -186,7 +292,7 @@ public static class RumourSpeech
         }
 
         return new RumourAsk(
-            town, PlayedClock.Seconds, mode, followId ?? "", HeardRecently(from), Roster(), named?.Id ?? "",
+            town, PlayedClock.Seconds, mode, followId ?? "", HeardRecently(from), Roster(), about,
             HeardWithin(from, RecentBlock), ambiguous, mode == "greet" && GreetInBrain
         );
     }
@@ -329,9 +435,23 @@ public static class RumourSpeech
             _npcUnprompted[npc.Serial] = now;
         }
 
+        // Step 2e (design §8.2, Codex R1-3): a story really told is remembered by its KEY after it is spoken (OnSpoken),
+        // so a corrected or changed version is news again; only teasers and thread marks keep the bare id here.
+        var delivered = new HashSet<string>();
+        foreach (var d in info.Delivered ?? [])
+        {
+            if (d?.Story != null)
+            {
+                delivered.Add(d.Story);
+            }
+        }
+
         foreach (var id in info.Ids)
         {
-            _heard[(from.Serial, id)] = now;
+            if (!delivered.Contains(id))
+            {
+                _heard[(from.Serial, id)] = now;
+            }
         }
 
         Prune(now);
@@ -344,6 +464,39 @@ public static class RumourSpeech
             info.Mode
         );
         return text;
+    }
+
+    // Step 2e (design §8.1, Codex R1-2/R2 Q1): AFTER the checked line has been said - by any teller, townsfolk or named -
+    // remember each delivered story by its key, and record it in the ledger for this listener. A teaser, a thread mark,
+    // a refused, retried or unsaid reply never gets here. Written only to a brain that accepts the kind (no queue is held
+    // behind it); the key must have the brain's own shape, and at most four per reply.
+    public static void OnSpoken(Mobile npc, Mobile from, AiReply reply)
+    {
+        if (reply.Rumour?.Delivered is not { Length: > 0 } list || npc == null || from is not PlayerMobile)
+        {
+            return;
+        }
+
+        var now = Core.Now;
+        var n = 0;
+        foreach (var d in list)
+        {
+            if (n >= 4 || d == null || string.IsNullOrEmpty(d.Story) || d.Story.Length > 40 || d.Hk == null ||
+                !HeardKey.IsMatch(d.Hk) || d.Town == null || !HeardTown.IsMatch(d.Town))
+            {
+                continue;
+            }
+
+            n++;
+            _heard[(from.Serial, d.Hk)] = now;
+            if (HeardLog && AiLedger.HeardIngest)
+            {
+                AiLedger.Record(
+                    npc, from, "rumour_heard",
+                    new { story = d.Story, hk = d.Hk, town = d.Town, pt = PlayedClock.Seconds, mpt = PlayedClock.MemorySeconds }
+                );
+            }
+        }
     }
 
     // What a reply that used gossip leaves in the NPC's history, and the id kept for a follow-up.

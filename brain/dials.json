@@ -178,5 +178,12 @@
     "greet_warmth_below": -20,
     "greet_familiarity_min": 3,
     "greet_stranger_share": 0.1667
+  },
+  "reputation": {
+    "_doc": "Step 2e (design §8.4/§9.6; the owner, chat, 2026-11-12: 7 played days): a town's reputation of a player from the stories that reached it. line: one code-written sentence (one real story, original facts) for an NPC that does not know them yet. dials: respect + each x renown, trust - each x dread (faded scores), each capped at cap; replaces respect.deed_* while on.",
+    "line": true,
+    "dials": true,
+    "each": 5,
+    "cap": 15
   }
 }

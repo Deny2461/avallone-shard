@@ -7,9 +7,16 @@ namespace Server.Avallone.AI;
 // when the NPC that acts on them stands nearby - see TownsfolkTalk.IsGameCommand.
 public static class GameCommands
 {
+    // Step 2e (design §8.8 E2, the owner, chat, 2026-11-12; Codex design R1 Q7): withdraw / balance / bank / check
+    // belong to the game ONLY with a banker in range (TownsfolkTalk.IsGameCommand) - "where is the bank from here?" is
+    // talk. Switch avallone.ai.bankWordsNeedBanker; off = always a command, as before.
+    public static bool BankWordsNeedBanker { get; set; } = true;
+
+    public static bool IsBankWord(int keyword) => keyword is >= 0x0 and <= 0x3;
+
     public static bool IsCommand(int keyword) =>
-        keyword is >= 0x0 and <= 0x3     // withdraw, balance, bank, check
-            or 0x7 or 0x8 or 0x9         // guards, stable, claim
+        IsBankWord(keyword) && !BankWordsNeedBanker || keyword is
+            0x7 or 0x8 or 0x9            // guards, stable, claim
             or 0x1D or 0x1E or 0x1F      // destination, i will take thee, disguise
             or >= 0x23 and <= 0x28       // house: lock down, release, secure, unsecure, strongbox, trash barrel
             or 0x33 or 0x34 or 0x38      // remove thyself, i ban thee, appraise

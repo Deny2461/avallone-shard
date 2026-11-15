@@ -43,6 +43,9 @@ public static class TownsfolkTalk
     public static void Configure()
     {
         Enabled = ServerConfiguration.GetOrUpdateSetting("avallone.ai.townsfolk", true);
+        GameCommands.BankWordsNeedBanker = ServerConfiguration.GetOrUpdateSetting("avallone.ai.bankWordsNeedBanker", true);
+        NamedNewsBeatsCrier = ServerConfiguration.GetOrUpdateSetting("avallone.ai.namedNewsBeatsCrier", true);
+        TownCrier.NewsRange = Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.crierNewsRange", 5), 1, 12);
         EventSink.Speech += OnSpeech;
         CommandSystem.Register("Townsfolk", AccessLevel.Administrator, Townsfolk_OnCommand);
     }
@@ -164,7 +167,17 @@ public static class TownsfolkTalk
             e.Handled = true;   // a buying question answered by the AI: a named shopkeeper does not also open its window
         }
 
-        _ = RespondAsync(npc, from, text);
+        // Step 2e E1 (Codex code R2): ONLY here - every admission check passed and this townsperson is answering - is a
+        // named-news line claimed, so the stock crier/barkeeper stay silent for THIS speech event and no other. Off,
+        // gateway down, a yell, the cooldown, nobody eligible: never claimed, and local news is answered as before.
+        SpeechEventArgs claimed = null;
+        if (NamedNewsBeatsCrier && Array.IndexOf(e.Keywords, 0x30) >= 0 && OpensWithTownsperson(from, text) &&
+            NameResolver.Resolve(from, text).Winner == npc)
+        {
+            _claimedNews = claimed = e;
+        }
+
+        _ = RespondAsync(npc, from, text, claimed);
     }
 
     // Real commands, plus three kinds that count only when the NPC acting on them is close by: the greeting and
@@ -207,7 +220,13 @@ public static class TownsfolkTalk
             var mine = k switch
             {
                 0x3B or 0xC => Near<BaseHire>(from, 6),
-                0x30        => Near<TownCrier>(from, 12) || Near<PlayerBarkeeper>(from, 12),
+                // Step 2e (design §8.8 E1; the owner, chat, 2026-11-12): is the crier's - unless the line opens with
+                // the name of one townsperson, unambiguously (the owner's demo: went unanswered).
+                // the owner 2026-11-13: the crier's range is a setting (TownCrier.NewsRange, default 5); a player barkeeper only
+                // answers news within 3 tiles, so at 4-12 it used to own the word and nobody answered.
+                0x30 => (Near<TownCrier>(from, TownCrier.NewsRange) || Near<PlayerBarkeeper>(from, 3)) &&
+                        !(NamedNewsBeatsCrier && OpensWithTownsperson(from, text)),
+                _ when GameCommands.IsBankWord(k) && GameCommands.BankWordsNeedBanker => Near<Banker>(from, 12),
                 0x4 or 0x5  => Near<BaseGuildmaster>(from, 2),
                 _           => false
             };
@@ -219,6 +238,64 @@ public static class TownsfolkTalk
         }
 
         return false;
+    }
+
+    // Step 2e E1 switch (avallone.ai.namedNewsBeatsCrier).
+    public static bool NamedNewsBeatsCrier { get; set; } = true;
+
+    // The one speech event whose named news a townsperson took (game thread only; the same SpeechEventArgs object goes to
+    // the EventSink handlers first and then to each nearby listener's OnSpeech - Mobile.DoSpeech).
+    private static SpeechEventArgs _claimedNews;
+
+    public static bool ClaimedNamedNews(SpeechEventArgs e) => e != null && ReferenceEquals(e, _claimedNews);
+
+    // Codex code R4: the event whose news the FALLBACK already answered. An immediately refused request can fall back while
+    // the engine is still handing this same event to nearby listeners; they must not answer it a second time.
+    private static SpeechEventArgs _servicedNews;
+
+    // What the stock crier/barkeeper ask: is this event's news someone else's (the AI took it) or already answered?
+    public static bool NewsTakenOrServiced(SpeechEventArgs e) =>
+        e != null && (ReferenceEquals(e, _claimedNews) || ReferenceEquals(e, _servicedNews));
+
+    internal static void OnSpeechForTests(SpeechEventArgs e) => OnSpeech(e);
+    internal static void ClaimForTests(SpeechEventArgs e) => _claimedNews = e;
+
+    private static readonly Regex LeadingWord = new(
+        @"^\s*(?:(?:hail|hello|hi|hey|greetings|ho)[\s,]+)?([\p{L}']+)",
+        RegexOptions.IgnoreCase | RegexOptions.CultureInvariant | RegexOptions.Compiled
+    );
+
+    // Step 2e E1 (Codex design R1 Q7): the line's LEADING name (after at most one greeting) resolves, unambiguously and
+    // through the one name resolver with its spelling and common-word safeguards, to an eligible townsperson. Merely
+    // containing a nearby name is not enough.
+    public static bool OpensWithTownsperson(Mobile from, string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return false;
+        }
+
+        var named = NameResolver.Resolve(from, text);
+        if (named.Ambiguous || named.Winner == null || !IsTownsperson(named.Winner))
+        {
+            return false;
+        }
+
+        var m = LeadingWord.Match(text);
+        if (!m.Success)
+        {
+            return false;
+        }
+
+        var lead = m.Groups[1].Value;
+        var first = named.Winner.Name?.Split(' ')[0] ?? "";
+        if (string.Equals(lead, first, StringComparison.OrdinalIgnoreCase))
+        {
+            return OpensWithName(text, first, IsCommonWord(first));
+        }
+
+        // a near spelling ("Maddy" for Mady): the leading word alone must resolve to the same townsperson
+        return named.Match == NameMatch.Near && NameResolver.Resolve(from, lead).Winner == named.Winner;
     }
 
     private static bool Near<T>(Mobile from, int range) where T : Mobile
@@ -521,7 +598,61 @@ public static class TownsfolkTalk
         return region?.Name ?? "the countryside";
     }
 
-    private static async Task RespondAsync(BaseCreature npc, Mobile from, string text)
+    // Step 2e (Codex code R3): if the townsperson took a named-news line but never SAID its reply (any return or error
+    // below), the stock crier/barkeeper news is given now, once, under their own rules - local news is never lost.
+    private static async Task RespondAsync(BaseCreature npc, Mobile from, string text, SpeechEventArgs claimed = null)
+    {
+        var spoke = new System.Runtime.CompilerServices.StrongBox<bool>();
+        try
+        {
+            await ReplyAsync(npc, from, text, spoke);
+        }
+        finally
+        {
+            if (claimed != null && !spoke.Value)   // set the moment the line is said, so a later error never re-answers
+            {
+                NewsFallback(claimed);
+            }
+        }
+    }
+
+    internal static Task RespondForTests(BaseCreature npc, Mobile from, string text, SpeechEventArgs claimed) =>
+        RespondAsync(npc, from, text, claimed);
+
+    internal static int NewsFallbacks { get; private set; }
+
+    internal static void NewsFallback(SpeechEventArgs e)
+    {
+        if (ReferenceEquals(_claimedNews, e))
+        {
+            _claimedNews = null;
+        }
+
+        _servicedNews = e;   // answered here, once: the engine's own dispatch of this event (if still to come) skips it
+        var from = e?.Mobile;
+        if (from == null || from.Deleted || from.Map == null || from.Map == Map.Internal)
+        {
+            return;
+        }
+
+        NewsFallbacks++;
+        foreach (var m in from.GetMobilesInRange(12))
+        {
+            switch (m)
+            {
+                case TownCrier crier:
+                    crier.TryAnswerNews(from);
+                    break;
+                case PlayerBarkeeper keeper:
+                    keeper.TryAnswerNews(from);
+                    break;
+            }
+        }
+    }
+
+    // The reply itself; true only once the townsperson has SAID it.
+    private static async Task<bool> ReplyAsync(BaseCreature npc, Mobile from, string text,
+        System.Runtime.CompilerServices.StrongBox<bool> spoke)
     {
         var key = (npc.Serial, from.Serial);
         var firstLine = !_talks.TryGetValue(key, out var talk) || Core.Now - talk.Last > ConversationWindow;
@@ -560,30 +691,37 @@ public static class TownsfolkTalk
         if (npc.Deleted || !npc.Alive || from.Deleted || from.NetState == null || from.Map != npc.Map ||
             !from.InRange(npc, StaleRange))
         {
-            return;
+            return false;
         }
 
         // Townsfolk fail silently: an unanswered remark is normal in a busy town.
         if (!reply.Ok)
         {
-            return;
+            return false;
         }
 
         var spoken = Server.Avallone.Rumours.RumourSpeech.Fill(npc, from, reply, town, request.Rumours, bind: true);
         if (spoken == null)
         {
-            return; // a gossip line that failed its name check is not said (townsfolk fail silently)
+            return false; // a gossip line that failed its name check is not said (townsfolk fail silently)
         }
 
         // Part A: the accepting line is said only if the correction is now in the saved outbox; else the ordinary reply.
+        var filled = spoken;
         spoken = Server.Avallone.Rumours.Corrections.Commit(npc, from, fix, reply) ?? spoken;
         npc.Direction = npc.GetDirectionTo(from);
         npc.Say(spoken);
+        spoke.Value = true;
+        if (ReferenceEquals(spoken, filled))
+        {
+            Server.Avallone.Rumours.RumourSpeech.OnSpoken(npc, from, reply); // Step 2e: a story really said, recorded now
+        }
         TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency"); // A1 floor
         // Stage A2: if this line spoke to the player's companion by name, she may answer (switch avallone.ai.exchanges).
         Exchange.AfterReply(
             npc, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop",
-            openingRevision, Exchange.ReactSortOf(reply) // rumour step C1
+            openingRevision, Exchange.ReactSortOf(reply), // rumour step C1
+            reply.Rumour                                  // Step 2e D1: a made-up story it fully told may be handed on
         );
         Relations.Visited(npc, from); // 5c-2 2b: familiarity + the day's warmth, only once a reply was really said
         Relations.Conduct(npc, from, reply);
@@ -592,6 +730,7 @@ public static class TownsfolkTalk
         Server.Avallone.Rumours.Corrections.AfterReply(npc, from, reply, openingRevision); // Part A: a ticket, or none
         Remember(talk.History, "player", text);
         Remember(talk.History, "npc", TravelParty.ForHistory(Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken), request.Party));
+        return true;
     }
 
     private static void Remember(List<AiLine> history, string speaker, string text)

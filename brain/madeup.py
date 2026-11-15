@@ -272,6 +272,24 @@ class MadeUp:
             self._spread[s["id"]] = got
         return got
 
+    def handoff_story(self, sid, pt, town):
+        """Step 2e D1 (Codex code R1-3): the travelling made-up story `sid` as it stands in `town` at played second `pt` -
+        or None. Checks what a hand-off needs, at the CURRENT clock: a real town (canonical name), a travelling made-up
+        story (never a one-off line), alive now, not dropped, and already ARRIVED in that town. No town cap: a story
+        that was told does not stop being true because newer talk arrived."""
+        t = self.rumours.resolve_town(town)
+        if t is None or not MU_RE.match(str(sid or "")):
+            return None
+        with self.ledger.rlock:
+            r = self.ledger.rdb.execute("SELECT id, kind, town, key, text, born_pt, expires_pt FROM madeup_stories WHERE id = ?",
+                                        (str(sid),)).fetchone()
+        pt = int(pt)
+        if r is None or r[1] != T_STORY or not (int(r[5]) <= pt < int(r[6])) or r[0] in self.rumours._dropped():
+            return None
+        s = {"id": r[0], "origin": r[2], "key": r[3], "text": r[4], "born_pt": int(r[5]), "expires_pt": int(r[6])}
+        hit = self._arrivals(s).get(t)
+        return s if hit and hit[0] <= pt else None
+
     # ---- what a town holds ----
     def town_rows(self, pt, town):
         """[(story, arrived_pt, hops)] live in `town` at played second `pt`: freshest arrival first, at most town_cap."""

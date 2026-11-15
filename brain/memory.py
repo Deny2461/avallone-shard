@@ -35,10 +35,12 @@ KINDS = {
     "talked_with",               # Stage A3: who an NPC traded lines with (facts only). Read ONLY by acquaintances().
     "rumour_corrected",          # Rumour step, Part A: a player's correction to a story about themselves (npc = the
                                  # world id; typed details only). Read ONLY by rumours.py (Rumours._fix).
+    "rumour_heard",              # Step 2e: a story really spoken to the listener (char) by an NPC (npc), recorded after
+                                 # speech; ids + suppression key only. Read ONLY by rumours.py (Rumours.heard_keys).
 }
 # Stage A3 (Codex design R1-1): kinds no ordinary reader may ever see - not retrieval, not the full-text index, not
 # reflection. Each has its own dedicated reader.
-PRIVATE_KINDS = ("talked_with", "rumour_corrected")
+PRIVATE_KINDS = ("talked_with", "rumour_corrected", "rumour_heard")
 NOT_PRIVATE = "kind NOT IN (" + ", ".join(f"'{k}'" for k in PRIVATE_KINDS) + ")"
 ITEM = re.compile(r"^((?:pet|petfix)\|[a-z]+( [a-z]+)?\|[A-Z][A-Za-z'\-]{1,15}|trade\|[a-z]+(?: and [a-z]+)?|home\|[A-Z][A-Za-z' ]{1,20}|request\|[^|]{3,90})$")
 CARD_ID = re.compile(r"^[a-z]:[A-Za-z0-9:_\-]{1,40}$")
@@ -317,6 +319,8 @@ class Ledger:
                             if npc != _rumours.WORLD_ID:
                                 raise ValueError("correction: not a world record")
                             corrections.check_facts(ev.get("facts"))
+                        if kind == "rumour_heard":
+                            check_heard(ev.get("facts"))
                         if kind in ("visit_summary", "visited", "reply_delivered", "traded", "gift_given",
                                     "player_used_hateful_language"):
                             check_named(kind, ev.get("facts"))
@@ -508,6 +512,35 @@ def check_named(kind, facts):
         v = facts.get(k, [])
         if not isinstance(v, list) or len(v) > n or any(not isinstance(x, str) or len(x) > size for x in v):
             raise ValueError(f"visit_summary {k} malformed")
+
+
+HEARD_DEED_ID = re.compile(r"^[1-9]\d{0,11}-[1-9]\d{0,11}$")
+HEARD_MADEUP_ID = re.compile(r"^m[uo]-[0-9a-z\-]{4,40}$")
+HEARD_KEY = re.compile(r"^(?:s:([1-9]\d{0,11}-[1-9]\d{0,11})@[0-9a-f]{16}|mk:([0-9a-f]{8}))$")
+HEARD_TOWN = re.compile(r"^[A-Za-z][A-Za-z' ]{0,29}$")
+
+
+def check_heard(facts):
+    """Step 2e (design §8.1/§10.1): one story really SPOKEN to the listener (char_id), recorded by the shard after the
+    checked line was said. Exactly {story, hk, town, pt, mpt}; never any words. `hk` is the suppression key:
+    "s:<story>@<version>" for a real deed (version = 16 hex of the canonical spoken sentence) or "mk:<content key>"
+    for a made-up / one-off line - and it must belong to `story`."""
+    if not isinstance(facts, dict) or set(facts) != {"story", "hk", "town", "pt", "mpt"}:
+        raise ValueError("rumour_heard needs exactly {story, hk, town, pt, mpt}")
+    story, hk, town = facts["story"], facts["hk"], facts["town"]
+    if not all(isinstance(x, str) for x in (story, hk, town)) or not HEARD_TOWN.match(town):
+        raise ValueError("rumour_heard story/hk/town malformed")
+    m = HEARD_KEY.match(hk)
+    if not m:
+        raise ValueError("rumour_heard hk malformed")
+    if m.group(1):
+        if not HEARD_DEED_ID.match(story) or m.group(1) != story:
+            raise ValueError("rumour_heard deed key does not belong to its story")
+    else:
+        import madeup
+        if not HEARD_MADEUP_ID.match(story) or madeup.key_of(story) != m.group(2):
+            raise ValueError("rumour_heard made-up key does not belong to its story")
+    _check_clocks(facts)
 
 
 def _check_clocks(facts):

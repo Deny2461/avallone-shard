@@ -70,7 +70,18 @@ public sealed record CorrectableStory(string Id, string Type);
 public sealed record CorrectionOffer(string Story, int? Count, string Thing, string Place, string Accept);
 
 // What the brain offered: the one sentinel (or empty), whose character id, the descriptor if they are gone, rumour ids.
-public sealed record RumourInfo(string Sentinel, string CharId, string Descriptor, string[] Ids, string Mode);
+// Step 2e (design §8.1): Delivered = the stories whose full telling is IN the reply's words (never a teaser or a
+// follow-up thread mark), each with its suppression key and town. Recorded as rumour_heard only after the line is said.
+// Step 2e D1 (Codex code R1-2): Handoff = the brain's own verdict, made while it still saw the WHOLE offer, that this
+// reply's one made-up story may be handed to a companion exchange. The shard never infers it from what was told.
+public sealed record RumourInfo(
+    string Sentinel, string CharId, string Descriptor, string[] Ids, string Mode, RumourDelivered[] Delivered = null,
+    RumourHandoff Handoff = null
+);
+
+public sealed record RumourHandoff(string Story, string Source);
+
+public sealed record RumourDelivered(string Story, string Hk, string Town);
 
 // Stage A2: one step of a spoken exchange between two AI characters (Exchange.cs). Public facts only - who speaks, to
 // whom, and what was said aloud so far (oldest first; the newest line is always the addressee's). TrustBand: a companion
@@ -95,8 +106,14 @@ public sealed record ExchangeAsk(
     // Rumour step C1: set only on a companion's one-line REACTION (0..5 = which fixed sort of remark the NPC was asked to
     // make to her). Such a step carries an EMPTY transcript: nothing the NPC said is sent. Null = an ordinary step; the
     // field is then left out, so an older brain sees exactly the request it always saw.
-    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? React = null
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] int? React = null,
+    // Step 2e D1: set only when the exchange's subject is a made-up story the townsperson just told - a typed id the brain
+    // resolves to the story's STORED text (the first transcript line is then a placeholder the brain replaces). Null =
+    // left out, so an older brain sees exactly the request it always saw.
+    [property: JsonIgnore(Condition = JsonIgnoreCondition.WhenWritingNull)] ExchangeStory Story = null
 );
+
+public sealed record ExchangeStory(string Id, string Source, long Pt, string Town);
 
 // One line of a conversation, oldest first. Speaker is "player" or "npc".
 public readonly record struct AiLine(string Speaker, string Text);

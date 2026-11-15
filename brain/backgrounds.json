@@ -1,0 +1,306 @@
+{
+ "_doc": "SAMPLE lists for the public copy of Avallone. The live shard's townsfolk pasts are hand-written and kept private; these invented lines show the shape. Each townsperson gets one home, one former life and one past event, the first time one is needed, and keeps them. Tags keep a biography from contradicting itself (pairs) and from clashing with a present trade.",
+ "pairs": [
+  [
+   "stay",
+   "roam"
+  ],
+  [
+   "stay",
+   "away"
+  ],
+  [
+   "sea",
+   "nosea"
+  ],
+  [
+   "reads",
+   "noread"
+  ],
+  [
+   "dogs",
+   "nodogs"
+  ],
+  [
+   "onlytrade",
+   "sidework"
+  ]
+ ],
+ "homes": [
+  {
+   "id": "H01",
+   "tags": [
+    "born"
+   ],
+   "text": "Born in this town, and has never seen much reason to leave."
+  },
+  {
+   "id": "H02",
+   "tags": [
+    "born"
+   ],
+   "text": "Born here during a hard winter, as the family tells it."
+  },
+  {
+   "id": "H03",
+   "tags": [
+    "born",
+    "stay"
+   ],
+   "text": "Born in the rooms above the old bakery, and has never left that street."
+  },
+  {
+   "id": "H04",
+   "tags": [
+    "moved",
+    "away"
+   ],
+   "town": "Britain",
+   "text": "Came from Britain, looking for a quieter life."
+  },
+  {
+   "id": "H05",
+   "tags": [
+    "moved",
+    "away"
+   ],
+   "town": "Vesper",
+   "text": "Came from Vesper after a falling-out with a cousin."
+  },
+  {
+   "id": "H06",
+   "tags": [
+    "moved",
+    "away"
+   ],
+   "town": "Yew",
+   "text": "Came from Yew, and still misses the trees."
+  },
+  {
+   "id": "H07",
+   "tags": [
+    "moved",
+    "away",
+    "nosea"
+   ],
+   "town": "Minoc",
+   "text": "Came from Minoc, high in the mountains, and has never once set foot on a beach."
+  },
+  {
+   "id": "H08",
+   "tags": [
+    "away"
+   ],
+   "text": "Grew up on a farm a day's walk from here."
+  }
+ ],
+ "lives": [
+  {
+   "id": "L01",
+   "tags": [
+    "sea",
+    "roam"
+   ],
+   "text": "Worked the fishing boats up and down the coast."
+  },
+  {
+   "id": "L02",
+   "tags": [
+    "roam"
+   ],
+   "text": "Sold pies from a tray at country fairs."
+  },
+  {
+   "id": "L03",
+   "tags": [
+    "reads"
+   ],
+   "text": "Kept the accounts for a merchant house."
+  },
+  {
+   "id": "L04",
+   "tags": [],
+   "text": "Cut stone in a quarry for twenty years."
+  },
+  {
+   "id": "L05",
+   "tags": [],
+   "text": "Helped run a family orchard."
+  },
+  {
+   "id": "L06",
+   "tags": [
+    "roam"
+   ],
+   "text": "Painted signs for inns up and down the roads."
+  },
+  {
+   "id": "L07",
+   "tags": [],
+   "text": "Carved wooden toys to sell on market days."
+  },
+  {
+   "id": "L08",
+   "tags": [
+    "reads"
+   ],
+   "text": "Wrote letters for people who could not write their own."
+  },
+  {
+   "id": "L09",
+   "tags": [],
+   "text": "Tended goats in the hills."
+  },
+  {
+   "id": "L10",
+   "tags": [],
+   "text": "Washed pots in the kitchen of a busy inn."
+  },
+  {
+   "id": "L11",
+   "tags": [
+    "sea"
+   ],
+   "text": "Dug for clams along the shore at low tide."
+  },
+  {
+   "id": "L12",
+   "tags": [],
+   "text": "Kept the bees for a wealthy family."
+  }
+ ],
+ "events": [
+  {
+   "id": "E001",
+   "tags": [],
+   "text": "Once found a silver ring baked into a loaf of bread."
+  },
+  {
+   "id": "E002",
+   "tags": [
+    "sea"
+   ],
+   "text": "Spent a summer building a boat that sank on its first day out."
+  },
+  {
+   "id": "E003",
+   "tags": [],
+   "text": "Once raced a neighbour round the town walls for a sack of flour, and lost."
+  },
+  {
+   "id": "E004",
+   "tags": [],
+   "text": "Once counted every step from the gate to the well, and still knows the number."
+  },
+  {
+   "id": "E005",
+   "tags": [
+    "roam"
+   ],
+   "text": "Once rowed across a lake at night just to win an argument."
+  },
+  {
+   "id": "E006",
+   "tags": [],
+   "text": "Has a scar on one thumb from a long fight with a stubborn jar lid."
+  },
+  {
+   "id": "E007",
+   "tags": [
+    "reads"
+   ],
+   "text": "Can recite the names of every king in the old chronicle."
+  },
+  {
+   "id": "E008",
+   "tags": [
+    "dogs"
+   ],
+   "text": "Took in a stray dog that followed them home one rainy night."
+  },
+  {
+   "id": "E009",
+   "tags": [],
+   "text": "Saw a falling star as a child and still makes a wish every night."
+  },
+  {
+   "id": "E010",
+   "tags": [],
+   "text": "Swapped a perfectly good hat for a pocketful of marbles as a child."
+  },
+  {
+   "id": "E011",
+   "tags": [],
+   "text": "Was trusted to ring the town bell at a festival, and rang it an hour early."
+  },
+  {
+   "id": "E012",
+   "tags": [],
+   "text": "Grew a turnip so large it was carried through the streets on a cart."
+  },
+  {
+   "id": "E013",
+   "tags": [],
+   "text": "Lived a whole month on nothing but porridge, to settle a wager."
+  },
+  {
+   "id": "E014",
+   "tags": [],
+   "text": "Spent a whole spring trying to teach a goose to fetch."
+  },
+  {
+   "id": "E015",
+   "tags": [],
+   "text": "Caught a fever once and still talks about the dreams it brought."
+  },
+  {
+   "id": "E016",
+   "tags": [],
+   "text": "Helped put out a fire in a neighbour's barn."
+  },
+  {
+   "id": "E017",
+   "tags": [],
+   "text": "Lent a stranger a cloak and got it back years later, freshly mended."
+  },
+  {
+   "id": "E018",
+   "tags": [
+    "nosea"
+   ],
+   "text": "Was so seasick on their only voyage that they never sailed again."
+  },
+  {
+   "id": "E019",
+   "tags": [],
+   "text": "Tamed a crow that now steals buttons for them."
+  },
+  {
+   "id": "E020",
+   "tags": [],
+   "text": "Carved a chair that the tavern still uses."
+  },
+  {
+   "id": "E021",
+   "tags": [],
+   "text": "Climbed the tallest tree for miles on a dare."
+  },
+  {
+   "id": "E022",
+   "tags": [],
+   "text": "Has never once lost at knucklebones, or so they claim."
+  },
+  {
+   "id": "E023",
+   "tags": [],
+   "text": "Once met a wizard who would not stop talking about frogs."
+  },
+  {
+   "id": "E024",
+   "tags": [
+    "dogs"
+   ],
+   "text": "Trained a sheepdog that was cleverer than most people they know."
+  }
+ ]
+}

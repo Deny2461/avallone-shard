@@ -372,9 +372,12 @@ class Handler(unittest.TestCase):
                                      json.dumps(body).encode(), {"Content-Type": "application/json"})
         return json.loads(urllib.request.urlopen(req, timeout=20).read())
 
-    def news(self, reply, flow=True, mode="news", **rask):
-        """Ask "What news?"; `reply` is what the model says - a string, or a function of the note it was shown."""
+    def news(self, reply, flow=True, mode="news", choice="tell", **rask):
+        """Ask "What news?"; `reply` is what the model says - a string, or a function of the note it was shown.
+        `choice` = the model's Step 2e "story" field ("tell" / "keep"; None = field missing)."""
         def fake(persona, utterance, *a, **k):
+            if k.get("story") and isinstance(k.get("stats"), dict) and choice is not None:
+                k["stats"]["story"] = choice
             text = " ".join(str(x) for x in list(a) + list(k.values()) if isinstance(x, str))
             self.prompts.append(text)
             note = next((ln[2:] for ln in text.split("\n") if ln.startswith("- ")), "")
@@ -548,6 +551,16 @@ class Handler(unittest.TestCase):
         self.assertFalse([r for r in world["rumours"] if r.get("source") == "made_up"])
         off = self.post("/v1/rumours/list", {"pt": PT, "town": "Britain"})
         self.assertFalse([r for r in off["rumours"] if r.get("source") == "made_up"])
+
+
+    # Step 2e (Codex code R11; the owner: the NPC decides): a made-up story the NPC chose to KEEP is never put into its reply in
+    # the fixed wording, and nothing is marked told.
+    def test_keep_or_a_missing_choice_adds_no_fixed_wording(self):
+        for choice in ("keep", None, "maybe"):
+            out = self.news("I will keep quiet.", choice=choice)
+            self.assertEqual(out["say"], "I will keep quiet.", choice)
+            self.assertFalse((out.get("rumour") or {}).get("ids"), choice)
+            self.assertFalse((out.get("rumour") or {}).get("delivered"), choice)
 
 
 if __name__ == "__main__":

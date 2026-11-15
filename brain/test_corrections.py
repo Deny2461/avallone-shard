@@ -338,8 +338,12 @@ class Turn(unittest.TestCase):
         self.led.ingest([deed(1, "fished_boots", count=40), deed(2, "kill_notable", char=OTHER, who="Brynn Ashby",
                                                                  subject="ettin", place="Yew"), deed(3, "murder")])
         self.prompts, self.calls = [], 0
+        # Step 2e: these tests check exact wording; the test NPC must not be a sceptic (its line of doubt is tested in
+        # test_gossip_habits.py), so its nature is read with the gossip habit forced to plain.
+        real_of = brain.nature.of
         self.patches = [mock.patch.object(brain, "LEDGER", self.led), mock.patch.object(brain, "RUMOURS", self.r),
-                        mock.patch.object(brain, "log", lambda **k: None)]
+                        mock.patch.object(brain, "log", lambda **k: None),
+                        mock.patch.object(brain.nature, "of", lambda n: (lambda p: p and dict(p, gossip="plain"))(real_of(n)))]
         for p in self.patches:
             p.start()
 
@@ -350,8 +354,10 @@ class Turn(unittest.TestCase):
         self.led.rdb.close()
         self.dir.cleanup()
 
-    def ask(self, utterance, ticket=None, on=True, rumours_ask=None, say="Aye, so they say."):
+    def ask(self, utterance, ticket=None, on=True, rumours_ask=None, say="Aye, so they say.", choice="tell"):
         def fake(persona, utt, *a, **k):
+            if k.get("story") and isinstance(k.get("stats"), dict) and choice is not None:
+                k["stats"]["story"] = choice    # Step 2e: the model's tell/keep field
             self.calls += 1
             self.prompts.append(" ".join(str(x) for x in list(a) + list(k.values()) if isinstance(x, str)))
             tok = rumour_speech.SENTINEL_RE.search(self.prompts[-1])

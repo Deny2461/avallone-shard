@@ -227,17 +227,15 @@ public partial class PlayerBarkeeper : BaseVendor
         return true;
     }
 
-    public override void OnSpeech(SpeechEventArgs e)
+    // Avallone step 2e (Codex code R3): the stock news answer, exactly as OnSpeech gives it - also called when the
+    // townsfolk AI took a named-news line but its reply never came. Same eligibility as ever: no news running, within 3.
+    internal static int NewsAnsweredForTests;
+
+    public bool TryAnswerNews(Mobile from)
     {
-        base.OnSpeech(e);
-
-        if (e.Handled || !InRange(e.Mobile, 3))
+        if (_newsTimer == null && from != null && InRange(from, 3))
         {
-            return;
-        }
-
-        if (_newsTimer == null && e.HasKeyword(0x30)) // *news*
-        {
+            NewsAnsweredForTests++;
             var tce = GlobalTownCrierEntryList.Instance.GetRandomEntry();
 
             if (tce == null)
@@ -255,6 +253,31 @@ public partial class PlayerBarkeeper : BaseVendor
 
                 PublicOverheadMessage(MessageType.Regular, 0x3B2, 502978); // Some of the latest news!
             }
+
+            return true;
+        }
+
+        return false;
+    }
+
+    public override void OnSpeech(SpeechEventArgs e)
+    {
+        base.OnSpeech(e);
+
+        if (e.Handled || !InRange(e.Mobile, 3))
+        {
+            return;
+        }
+
+        // Avallone step 2e E1 (Codex code R1-4, R2): silent only when the townsfolk AI actually TOOK this speech event.
+        if (e.HasKeyword(0x30) && Server.Avallone.AI.TownsfolkTalk.NewsTakenOrServiced(e))
+        {
+            return;
+        }
+
+        if (e.HasKeyword(0x30)) // *news*
+        {
+            TryAnswerNews(e.Mobile);
         }
 
         if (_rumors == null)

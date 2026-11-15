@@ -291,7 +291,21 @@ def compute(req, ledger, rumours, detail=False, now=None):
     trust = _clamp(trust_base + trust_env, -100.0, 100.0)
     resp_base = line_value(fame, tr["respect_T"], tr["respect_W"], tr["respect_lean"])
     resp_env = _clamp(c["unease"]["respect_per_u"] * u, -cap, cap) if resp_base > 0 else 0.0  # those it regards already
-    deeds = deed_respect(live, char)
+    # Step 2e (design §8.4/§9.6): a town's reputation of the player replaces the short-lived deed bonus - renown raises
+    # respect, dread lowers trust (apart from ambient unease), both from the FADED score; jest moves no dial.
+    rc = c.get("reputation", {})
+    rep = None
+    if rumours is not None and (rc.get("line") or rc.get("dials")):
+        import reputation
+        rep = reputation.of(rumours, char, town, pt, repeat_window_h=c["unease"]["repeat_window_h"],
+                            repeat_mult=c["unease"]["repeat_mult"])
+    dread = 0.0
+    if rep is not None and rc.get("dials"):
+        deeds = min(float(rc.get("cap", 15)), float(rc.get("each", 5)) * rep["renown"])
+        dread = min(float(rc.get("cap", 15)), float(rc.get("each", 5)) * rep["dread"])
+        trust = _clamp(trust - dread, -100.0, 100.0)
+    else:
+        deeds = deed_respect(live, char)
     respect = _clamp(resp_base + resp_env + deeds, -100.0, 100.0)
     items = [] if detail else None
     wm = warmth(ledger, npc, char, mpt, tr["warmth_rest"], items)
@@ -306,7 +320,11 @@ def compute(req, ledger, rumours, detail=False, now=None):
                         "town": town,
                         "warmth_rest": round(tr["warmth_rest"], 1), "warmth_events": round(wm[1], 2),
                         "trust_lean": tr["trust_lean"], "respect_lean": tr["respect_lean"],
-                        "superstitious": tr["superstitious"], "stories_live": len(live)}}
+                        "superstitious": tr["superstitious"], "stories_live": len(live),
+                        "reputation": ({k: rep[k] for k in ("renown", "dread", "jest", "label")} if rep else None),
+                        "dread": round(dread, 1)}}
+    if rep is not None and rc.get("line") and rep.get("line"):
+        out["reputation_line"] = rep["line"]
     if detail:
         out["detail"] = {
             "traits": {k: (round(v, 1) if isinstance(v, float) else v) for k, v in tr.items()},
@@ -377,4 +395,6 @@ def cue(d):
             "changes prices, goods or service: " + "; ".join((
                 familiarity_words(d["familiarity"]), band(d["warmth"], "warmth"), band(d["trust"], "trust"),
                 band(d["respect"], "respect"))) + "." +
-            (f" If they ask what you like or would welcome as a gift: {d['likes']}." if d.get("likes") else ""))
+            (f" If they ask what you like or would welcome as a gift: {d['likes']}." if d.get("likes") else "") +
+            # Step 2e (design §8.4): only for someone this NPC does not know yet - its own memory serves the rest
+            (" " + d["reputation_line"] if d.get("reputation_line") and greet_stranger(d) else ""))

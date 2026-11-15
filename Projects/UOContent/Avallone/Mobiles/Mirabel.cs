@@ -219,14 +219,20 @@ public partial class Mirabel : InnKeeper, Server.Avallone.Named.INamedNpc
             }
 
             // Part A: the accepting line only once the correction is in the saved outbox; else the ordinary reply.
+            var filled = spoken;
             spoken = Server.Avallone.Rumours.Corrections.Commit(this, from, fix, reply) ?? spoken;
             Direction = GetDirectionTo(from);
             Say(spoken);
+            if (ReferenceEquals(spoken, filled))
+            {
+                Server.Avallone.Rumours.RumourSpeech.OnSpoken(this, from, reply); // Step 2e: a story really said, recorded now
+            }
             Server.Avallone.AI.TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency");
             // Stage A2: if she spoke to the player's companion by name, the companion may answer (switch avallone.ai.exchanges).
             Server.Avallone.AI.Exchange.AfterReply(
                 this, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop",
-                openingRevision, Server.Avallone.AI.Exchange.ReactSortOf(reply) // rumour step C1
+                openingRevision, Server.Avallone.AI.Exchange.ReactSortOf(reply), // rumour step C1
+                reply.Rumour                                                      // Step 2e D1
             );
             Remember(history, "player", text);
             Remember(history, "npc", Server.Avallone.AI.TravelParty.ForHistory(Server.Avallone.Rumours.RumourSpeech.HistoryText(reply, spoken), request.Party));

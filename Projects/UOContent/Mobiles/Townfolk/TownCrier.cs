@@ -478,13 +478,39 @@ public partial class TownCrier : Mobile, ITownCrierEntryList
         }
     }
 
-    public override bool HandlesOnSpeech(Mobile from) => _newsTimer == null && from.Alive && InRange(from, 12);
+    // Avallone (the owner, chat, 2026-11-13):
+    // how far a crier hears "news" - stock 12 tiles (through walls), here avallone.crierNewsRange, default 5. Set by
+    // TownsfolkTalk.Configure; the townsfolk AI's "is a crier close by?" check uses the same value, so they always agree.
+    public static int NewsRange { get; set; } = 5;
+
+    public override bool HandlesOnSpeech(Mobile from) => _newsTimer == null && from.Alive && InRange(from, NewsRange);
+
+    // Avallone step 2e E1 (Codex code R1-4, R2): "Mady, any news?" is Mady's - the crier stays silent only when the
+    // townsfolk AI has actually TAKEN this very speech event. If the AI did not (off, a yell, cooldown ...), the crier answers.
+    internal static int NewsAnsweredForTests;
 
     public override void OnSpeech(SpeechEventArgs e)
     {
-        if (_newsTimer == null && e.HasKeyword(0x30) && e.Mobile.Alive && InRange(e.Mobile, 12)) // *news*
+        if (e.HasKeyword(0x30) && Server.Avallone.AI.TownsfolkTalk.NewsTakenOrServiced(e))
         {
-            Direction = GetDirectionTo(e.Mobile);
+            return;
+        }
+
+        if (e.HasKeyword(0x30)) // *news*
+        {
+            TryAnswerNews(e.Mobile);
+        }
+    }
+
+    // Avallone step 2e (Codex code R3): the stock news answer, exactly as OnSpeech gives it - also called when the
+    // townsfolk AI took a named-news line but its reply never came (gateway refused, check failed): local news is
+    // never lost. Same eligibility as ever: no news running, a living speaker within 12 tiles.
+    public bool TryAnswerNews(Mobile from)
+    {
+        if (_newsTimer == null && from is { Alive: true } && InRange(from, NewsRange))
+        {
+            NewsAnsweredForTests++;
+            Direction = GetDirectionTo(from);
 
             var tce = GetRandomEntry();
 
@@ -503,7 +529,11 @@ public partial class TownCrier : Mobile, ITownCrierEntryList
 
                 PublicOverheadMessage(MessageType.Regular, 0x3B2, 502978); // Some of the latest news!
             }
+
+            return true;
         }
+
+        return false;
     }
 
     public override bool CanBeDamaged() => false;

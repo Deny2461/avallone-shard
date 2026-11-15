@@ -80,6 +80,11 @@ public class AiLedger : GenericPersistence
     // shard delivers to has said its ingest accepts "rumour_corrected" rows. False -> no correction is taken
     // (Corrections.Ready) and a queued correction row is HELD - never sent to a brain that would refuse it, never dropped.
     public static bool CorrectionsIngest { get; private set; }
+
+    // Step 2e (design §9.1, Codex design R2/R3): a third kind of record on the same rule - "rumour_heard" (a story really
+    // spoken to a player). True only while the brain this shard delivers to has said its ingest accepts it; a queued
+    // row is HELD until then, and one refused by a brain that does not accept the kind is KEPT, never dropped.
+    public static bool HeardIngest { get; private set; }
     public static int OutboxCount => _outbox.Count;
     public static int MaxOutbox { get; private set; }
     public static long SavedEpoch => _savedEpoch;
@@ -203,14 +208,29 @@ public class AiLedger : GenericPersistence
         Reconciled = false;
         TopicsIngest = false;
         CorrectionsIngest = false;
+        HeardIngest = false;
         TopicsHeld = 0;
     }
 
     internal static void SetTopicsIngestForTests(bool on) => TopicsIngest = on;
     internal static void SetCorrectionsIngestForTests(bool on) => CorrectionsIngest = on;
+    internal static void SetHeardIngestForTests(bool on) => HeardIngest = on;
 
-    // Which brain capability a queued row needs before it may be sent: 0 none, 1 talked-with topics, 2 corrections.
-    internal static int Need(LedgerEvent e) => CarriesTopics(e) ? 1 : e.Kind == "rumour_corrected" ? 2 : 0;
+    // Which brain capability a queued row needs before it may be sent: 0 none, 1 talked-with topics, 2 corrections,
+    // 3 story-heard records (Step 2e).
+    internal static int Need(LedgerEvent e) =>
+        CarriesTopics(e) ? 1 : e.Kind == "rumour_corrected" ? 2 : e.Kind == "rumour_heard" ? 3 : 0;
+
+    // Step 2e (Codex design R3 Q1): one place says whether a capability is confirmed - the old two-way expression
+    // (need == 1 ? topics : corrections) cannot be extended to a third kind.
+    internal static bool Confirmed(int need, bool topics, bool corrections, bool heard) => need switch
+    {
+        0 => true,
+        1 => topics,
+        2 => corrections,
+        3 => heard,
+        _ => false
+    };
 
     internal static bool CarriesTopics(LedgerEvent e) =>
         e.Kind == "talked_with" && e.FactsJson != null && e.FactsJson.Contains("\"topics\"", StringComparison.Ordinal);
@@ -222,7 +242,8 @@ public class AiLedger : GenericPersistence
     // Rumour step, Part A: the rule is the same for correction rows and their own capability, and a batch never mixes
     // the two kinds of special row (each is judged by its own answer).
     internal static int SendableCount(
-        System.Collections.Generic.IReadOnlyList<LedgerEvent> outbox, int batchSize, bool topicsIngest, bool correctionsIngest = false
+        System.Collections.Generic.IReadOnlyList<LedgerEvent> outbox, int batchSize, bool topicsIngest, bool correctionsIngest = false,
+        bool heardIngest = false
     )
     {
         var n = Math.Min(batchSize, outbox.Count);
@@ -230,7 +251,7 @@ public class AiLedger : GenericPersistence
         for (var i = 0; i < n; i++)
         {
             var need = Need(outbox[i]);
-            if (need != 0 && !(need == 1 ? topicsIngest : correctionsIngest))
+            if (!Confirmed(need, topicsIngest, correctionsIngest, heardIngest))
             {
                 return i; // held: nothing goes out past it
             }
@@ -349,11 +370,13 @@ public class AiLedger : GenericPersistence
     }
 
     private sealed record ReconcileReply(
-        bool Ok, string Verdict, int RolledBack, string Reason, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0
+        bool Ok, string Verdict, int RolledBack, string Reason, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0,
+        int RumourHeard = 0
     );
 
     private sealed record IngestReply(
-        bool Ok, string[] Acked, string[] Rejected, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0
+        bool Ok, string[] Acked, string[] Rejected, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0,
+        int RumourHeard = 0
     );
 
     // Awaits resume on the game thread (ModernUO's EventLoopContext), so state is only touched there.
@@ -383,6 +406,7 @@ public class AiLedger : GenericPersistence
 
             TopicsIngest = reply.TalkedWithTopics == 1;
             CorrectionsIngest = reply.RumourCorrected == 1;
+            HeardIngest = reply.RumourHeard == 1;
 
             if (reply.Verdict == "conflict")
             {
@@ -418,7 +442,7 @@ public class AiLedger : GenericPersistence
         {
             // Step 2: a row that carries topics goes only to an ingest that has confirmed it understands them. With
             // none sendable the batch is empty - that still asks the brain, and its answer re-reads the capability.
-            var take = SendableCount(_outbox, BatchSize, TopicsIngest, CorrectionsIngest);
+            var take = SendableCount(_outbox, BatchSize, TopicsIngest, CorrectionsIngest, HeardIngest);
             var batch = _outbox.GetRange(0, take);
             var events = batch.ConvertAll(e => new
             {
@@ -448,13 +472,14 @@ public class AiLedger : GenericPersistence
             // Rumour step, Part A: the same for a correction row and the answer's "rumour_corrected".
             var confirms = reply.TalkedWithTopics == 1;
             var confirmsCorrections = reply.RumourCorrected == 1;
+            var confirmsHeard = reply.RumourHeard == 1;
             var done = new HashSet<string>(reply.Acked ?? []);
             var kept = 0;
             foreach (var id in reply.Rejected ?? [])
             {
                 var row = batch.Find(e => e.EventId == id);
                 var need = row == null ? 0 : Need(row);
-                if (need == 1 && !confirms || need == 2 && !confirmsCorrections)
+                if (need != 0 && !Confirmed(need, confirms, confirmsCorrections, confirmsHeard))
                 {
                     kept++;
                     continue;
@@ -468,17 +493,18 @@ public class AiLedger : GenericPersistence
             _warnedDown = false;
             TopicsIngest = confirms;
             CorrectionsIngest = confirmsCorrections;
+            HeardIngest = confirmsHeard;
             if (kept > 0)
             {
                 logger.Warning(
-                    "Avallone memory: {Kept} event(s) of a newer kind (talked-with topics / rumour corrections) were refused by " +
+                    "Avallone memory: {Kept} event(s) of a newer kind (talked-with topics / rumour corrections / stories heard) were refused by " +
                     "a brain that does not accept them (replaced or rolled back?). KEPT, not dropped",
                     kept
                 );
             }
 
             var headNeed = _outbox.Count > 0 ? Need(_outbox[0]) : 0;
-            if ((take == 0 || kept > 0) && (headNeed == 1 && !TopicsIngest || headNeed == 2 && !CorrectionsIngest))
+            if ((take == 0 || kept > 0) && !Confirmed(headNeed, TopicsIngest, CorrectionsIngest, HeardIngest))
             {
                 TopicsHeld = _outbox.Count;
                 _nextTry = Core.Now + TimeSpan.FromSeconds(30);
@@ -487,7 +513,7 @@ public class AiLedger : GenericPersistence
                     _warnedHeld = true;
                     logger.Warning(
                         "Avallone memory: {Held} event(s) HELD - the brain's ingest does not accept the record at the head of " +
-                        "the queue (talked-with topics or a rumour correction). " +
+                        "the queue (talked-with topics, a rumour correction or a story-heard record). " +
                         "Nothing is dropped; they go out when a brain that accepts them answers",
                         _outbox.Count
                     );
@@ -522,6 +548,7 @@ public class AiLedger : GenericPersistence
         // Unconfirmed until an answer says so again; the next batch stops at the first topic row and re-reads it.
         TopicsIngest = false;
         CorrectionsIngest = false;
+        HeardIngest = false;
         _nextTry = Core.Now + TimeSpan.FromSeconds(30);
         if (!_warnedDown)
         {
@@ -535,7 +562,8 @@ public class AiLedger : GenericPersistence
         $"memory {State} ({StateReason}); epoch {Epoch}, last event {Seq}, outbox {_outbox.Count}/{MaxOutbox}; " +
         $"loaded save held events up to {_savedEpoch}-{_savedSeq}" +
         $"; talked-with topics: ingest {(TopicsIngest ? "confirmed" : "not confirmed")}; rumour corrections: ingest " +
-        $"{(CorrectionsIngest ? "confirmed" : "not confirmed")}{(TopicsHeld > 0 ? $"; {TopicsHeld} HELD" : "")}";
+        $"{(CorrectionsIngest ? "confirmed" : "not confirmed")}; stories heard: ingest " +
+        $"{(HeardIngest ? "confirmed" : "not confirmed")}{(TopicsHeld > 0 ? $"; {TopicsHeld} HELD" : "")}";
 
     public static async Task<string> BrainStatusAsync(Guid? npcId, Guid? charId)
     {

@@ -82,7 +82,9 @@ def of(npc_id):
     pet = _choose(npc, "pet", c.get("pet_names") or []) or "friend"
     word = _choose(npc, "word", c.get("fav_words") or []) or "truly"
     jab = _choose(npc, "jab", c.get("jabs") or []) or ""
-    return {"key": p["key"], "name": p["name"], "group": p.get("group", ""), "line": p["line"], "lean": p.get("lean", ""),
+    # Step 2e (design A3; the owner, chat, 2026-11-12: gossip 1/4, cautious 1/5, sceptic 1/6, the rest plain)
+    gh = _choose(npc, "gossip_habit", c.get("gossip_habits") or [], lambda x: x.get("weight", 0), lambda x: x["key"])
+    return {"gossip": gh["key"] if gh else "plain","key": p["key"], "name": p["name"], "group": p.get("group", ""), "line": p["line"], "lean": p.get("lean", ""),
             "habit": h["key"], "habit_line": h["line"].replace("{pet}", pet).replace("{word}", word),
             "habit_manner": h.get("manner") is True, "habit_share": h.get("share"),
             "subject": subject, "jab": jab}
@@ -115,6 +117,41 @@ def habit_in_prompt(npc_id, conversation, turn, now=None):
         while len(_turns) > TURNS_MAX:
             _turns.popitem(last=False)
         return shown
+
+
+_bg_turns = collections.OrderedDict()   # (npc, conversation) -> (turn id, shown?, monotonic time)
+
+
+def background_in_prompt(npc_id, conversation, turn, slot_taken, now=None):
+    """Step 2e (design §8.5): is the NPC's background in THIS turn's prompt, unasked? It shares the ONE flourish slot with
+    a flourish habit: never when the habit is in this turn (slot_taken), never two turns running, otherwise for
+    backgrounds.share of turns. A retry of the same turn gets the same answer. Asked-about turns bypass this (brain)."""
+    b = cfg().get("backgrounds") or {}
+    if not b.get("enabled") or slot_taken:
+        return False
+    share = min(1.0, max(0.0, float(b.get("share", 0.15))))
+    gap = float((cfg().get("flourishes") or {}).get("gap_s", 600))
+    now = time.monotonic() if now is None else now
+    key = (str(npc_id), str(conversation or ""))
+    turn = str(turn or "")
+    with _turn_lock:
+        last = _bg_turns.get(key)
+        if last and turn and last[0] == turn:
+            return last[1]
+        just_shown = bool(last and last[1] and now - last[2] <= gap)
+        u = _unit(npc_id, "background", key[1], turn) if turn else _unit(npc_id, "background", key[1], now, len(_bg_turns))
+        shown = (not just_shown) and u < share
+        _bg_turns[key] = (turn, shown, now)
+        _bg_turns.move_to_end(key)
+        while len(_bg_turns) > TURNS_MAX:
+            _bg_turns.popitem(last=False)
+        return shown
+
+
+def habit_is_flourish(p):
+    """True when this NPC's habit is a flourish under the gate (so a turn showing it fills the shared slot)."""
+    f = cfg().get("flourishes") or {}
+    return bool(p and p["habit"] and f.get("enabled") and not p["habit_manner"])
 
 
 def prompt_block(p, habit=True):

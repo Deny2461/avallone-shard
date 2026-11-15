@@ -27,6 +27,14 @@ import corrections
 WORLD_ID = "a7a110e0-0000-4000-8000-000000000001"
 DISTORTIONS = ("count_up", "place_drift", "name_vague")
 PLAYER_DEATHS = ("died_notable", "died_pathetic")   # a player's own death is never changed in the telling, funny or not
+# Step 2e (design v6 §12.1): groups live inside fixed buckets of played time. A constant, not a setting - every retention
+# bound is computed from it, so nothing can be tuned to understate it (Codex design R6).
+BUCKET_S = 24 * 3600
+# Step 2e (the owner, chat, 2026-11-12: 7 played days): how long a town's reputation of a player remembers a story after it arrives.
+REPUTATION_S = 7 * 24 * 3600
+# Step 2e (design §9.2): the name used when a story's VERSION is computed - never a real player's name, so a rename or
+# "you" versus a name never makes the same story new again.
+STAND_IN = "Someone"
 
 
 def may_distort(name, spec):
@@ -81,6 +89,12 @@ class Rumours:
             ledger.db.execute("CREATE INDEX IF NOT EXISTS rumour_arrivals_pt ON rumour_arrivals (pt)")
             ledger.db.execute("""CREATE INDEX IF NOT EXISTS events_corrected_story
                                    ON events (json_extract(facts, '$.story')) WHERE kind = 'rumour_corrected'""")
+            # Step 2e (design §8.4, Codex R2 Q4): the reputation read is per character - an indexed range, not a scan.
+            ledger.db.execute("""CREATE INDEX IF NOT EXISTS events_deed_char
+                                   ON events (char_id, json_extract(facts, '$.pt')) WHERE kind = 'deed'""")
+            # Step 2e (Codex design R2 Q1): the listener-wide "already heard" read leads with the listener.
+            ledger.db.execute("""CREATE INDEX IF NOT EXISTS events_heard
+                                   ON events (char_id, status) WHERE kind = 'rumour_heard'""")
 
     # ---- config ----
     def _load(self):
@@ -105,6 +119,14 @@ class Rumours:
             longest = max(float(d.get("lifetime_h", 24)) + float(d.get("window_h", 0)) for d in cfg["deeds"].values())
             if float(cfg.get("horizon_h", 168)) < 2 * longest:
                 raise ValueError(f"horizon_h must be at least {2 * longest} (twice the longest lifetime + window)")
+            prev, self.cfg = self.cfg, cfg
+            try:   # Step 2e (design §11.2): a story that can still be told must have its first deed inside the horizon
+                need_h = (BUCKET_S + self.max_travel_s()) / 3600 + max(float(d.get("lifetime_h", 24))
+                                                                     for d in cfg["deeds"].values())
+            finally:
+                self.cfg = prev
+            if float(cfg.get("horizon_h", 168)) < need_h:
+                raise ValueError(f"horizon_h must be at least {need_h:.1f} (bucket + longest travel + longest lifetime)")
             self.cfg, self._mtime = cfg, m
         return self.cfg
 
@@ -134,18 +156,47 @@ class Rumours:
     def horizon(self):
         return int(float(self.cfg.get("horizon_h", 168)) * 3600)
 
-    def _deeds(self, pt):
-        """Live deeds from the last horizon_h played hours up to `pt`, oldest first (indexed range read)."""
+    def max_travel_s(self):
+        """Upper bound on how long any story takes to reach any town it can reach: the longest shortest path of the
+        town graph x speed x the largest per-edge jitter (1.25). Step 2e design §11.2/§13 item 3: computed, never typed."""
+        graph, speed = self.cfg["_graph"], float(self.cfg.get("speed", 1.0))
+        longest = 0.0
+        for origin in graph:
+            dist, heap = {origin: 0.0}, [(0.0, origin)]
+            while heap:
+                d, town = heapq.heappop(heap)
+                if d > dist.get(town, 1e18):
+                    continue
+                for nxt, hours in graph[town]:
+                    if d + hours < dist.get(nxt, 1e18):
+                        dist[nxt] = d + hours
+                        heapq.heappush(heap, (d + hours, nxt))
+            longest = max(longest, max(dist.values()))
+        return int(longest * speed * 1.25 * 3600)
+
+    def drop_retention_s(self):
+        """How long a GM drop must be kept, from its story's first deed (design §11.2 / §13 item 3): a story spans less
+        than one bucket, then travels, then counts for reputation for REPUTATION_S after reaching a town. Computed."""
+        return BUCKET_S + self.max_travel_s() + REPUTATION_S
+
+    def _deeds(self, pt, lookback=None):
+        """Live deeds up to `pt`, oldest first (indexed range read). The read starts on a bucket boundary at or before
+        `pt - lookback` (default: the horizon), so every bucket it returns is whole and every group in it is canonical
+        (Step 2e design v6 §12.1: the same deeds give the same groups whatever the read's start)."""
+        lookback = self.horizon() if lookback is None else int(lookback)
+        start = ((int(pt) - lookback) // BUCKET_S) * BUCKET_S
         with self.ledger.rlock:  # the read-only connection: never waits behind a write (4d soak lesson)
             rows = self.ledger.rdb.execute(
                 """SELECT event_id, char_id, facts FROM events
                    WHERE npc_id = ? AND kind = 'deed' AND json_extract(facts, '$.pt') BETWEEN ? AND ?
-                     AND status = 'live' ORDER BY epoch, seq""", (WORLD_ID, pt - self.horizon(), pt)).fetchall()
+                     AND status = 'live' ORDER BY epoch, seq""", (WORLD_ID, start, pt)).fetchall()
         return [(r[0], r[1], json.loads(r[2])) for r in rows]
 
     def _group(self, deeds):
         """Repeats of the same deed close together in played time become ONE rumour that grows (farming 20 dragons
-        is one story, not twenty)."""
+        is one story, not twenty). Step 2e (design v6 §12.1; the owner, chat, 2026-11-13): a group never
+        crosses a fixed bucket of BUCKET_S played seconds, so its membership depends only on the deeds in its own
+        bucket - canonical for every read that holds that whole bucket."""
         cfg = self.cfg
         groups, open_by_key = [], {}
         for eid, char, f in deeds:
@@ -155,7 +206,7 @@ class Rumours:
                 continue
             origin = self.origin_town(f)
             pt = int(f.get("pt", 0))
-            key = (char, typ, f.get("subject", ""), origin)
+            key = (char, typ, f.get("subject", ""), origin, pt // BUCKET_S)
             g = open_by_key.get(key)
             window = float(spec.get("window_h", 0)) * 3600
             if g and window > 0 and pt - g["last_pt"] <= window:
@@ -222,11 +273,45 @@ class Rumours:
             return g
         return None
 
+    def _hops(self, origin):
+        """Unjittered shortest travel hours from `origin` to every town (the reach test uses these; jitter is for timing)."""
+        graph = self.cfg["_graph"]
+        dist, heap = {origin: 0.0}, [(0.0, origin)]
+        while heap:
+            d, town = heapq.heappop(heap)
+            if d > dist.get(town, 1e18):
+                continue
+            for nxt, hours in graph[town]:
+                if d + hours < dist.get(nxt, 1e18):
+                    dist[nxt] = d + hours
+                    heapq.heappush(heap, (d + hours, nxt))
+        return dist
+
+    def _reach(self, g):
+        """Step 2e (design A2/§8.3; the owner, chat, 2026-11-12; radius corrected to 2.5 h the same day): which
+        towns a story can reach, by its deed type's weight. None = every town (weight 3, made-up stories - which carry
+        no deed type - and anything with weighted_spread off). Weight 1: its own town and the towns one road away.
+        Weight 2: towns within 2.5 unjittered travel-hours."""
+        if not self.cfg.get("weighted_spread") or "type" not in g:
+            return None
+        w = int(self.cfg["deeds"].get(g["type"], {}).get("weight", 3))
+        if w >= 3:
+            return None
+        origin = g["origin"]
+        if w <= 1:
+            return {origin} | {t for t, _h in self.cfg["_graph"][origin]}
+        return {t for t, d in self._hops(origin).items() if d <= 2.5}
+
     def _spread(self, g):
         """Played-hour arrival time and path for every town the rumour can reach (Dijkstra; each edge's delay is
-        jittered +-25% per rumour, deterministically)."""
+        jittered +-25% per rumour, deterministically). Step 2e: weight-3 stories travel 1.5x faster, and a lighter
+        story reaches only the towns _reach() allows."""
         cfg, graph = self.cfg, self.cfg["_graph"]
         speed = float(cfg.get("speed", 1.0))
+        reach = self._reach(g)
+        if (cfg.get("weighted_spread") and "type" in g
+                and int(cfg["deeds"].get(g["type"], {}).get("weight", 3)) >= 3):
+            speed = speed / 1.5
         dist, prev = {g["origin"]: 0.0}, {g["origin"]: None}
         heap = [(0.0, g["origin"])]
         while heap:
@@ -241,6 +326,8 @@ class Rumours:
                     heapq.heappush(heap, (nd, nxt))
         out = {}
         for town, d in dist.items():
+            if reach is not None and town not in reach:
+                continue
             path, t = [], town
             while t is not None:
                 path.append(t)
@@ -373,8 +460,28 @@ class Rumours:
             f = g["facts"]
             rows.append({"id": g["id"], "char": g["char"], "type": g["type"], "town": t, "arrived_pt": arrive,
                          "vague": "name_vague" in garbles or not g["char"] or g["type"] == "gm_planted",
-                         "descriptor": f.get("descriptor") or "an adventurer", "_g": g, "_garbles": garbles})
+                         "descriptor": f.get("descriptor") or "an adventurer", "_g": g, "_garbles": garbles,
+                         "hk": f"s:{g['id']}@{self.version(g, garbles, t)}"})
         return rows
+
+    def version(self, g, garbles, town):
+        """Step 2e (design §9.2, Codex R3 Q2): 16 hex of the story's canonical spoken sentence in this town - corrections
+        applied (raw=False), this town's garbles, a fixed stand-in name, no opening and no suffix. So it changes exactly
+        when the words a listener would hear change: not for an unspoken count, not for a rename."""
+        text = " ".join(self.render(g, garbles, town, who=STAND_IN).lower().split())
+        return hashlib.sha256(("avallone-heard|" + g["type"] + "|" + text).encode("utf-8")).hexdigest()[:16]
+
+    def heard_keys(self, char_id):
+        """Step 2e (design §8.1): every suppression key ("s:<story>@<version>" or "mk:<content key>") this listener has
+        really been told, by any NPC, from live ledger rows only - a world restore has already marked rows from an
+        abandoned branch rolled_back, so nothing here filters by clock. Empty for an empty or unknown listener."""
+        if not char_id:
+            return set()
+        with self.ledger.rlock:
+            rows = self.ledger.rdb.execute(
+                """SELECT json_extract(facts, '$.hk') FROM events
+                   WHERE char_id = ? AND status = 'live' AND kind = 'rumour_heard'""", (str(char_id)[:36],)).fetchall()
+        return {r[0] for r in rows if isinstance(r[0], str)}
 
     def render_for(self, row, who=None, vague=False):
         garbles = list(row["_garbles"])
@@ -426,12 +533,16 @@ class Rumours:
                                              (r["id"], r["town"], r["arrived_pt"]))
                 if cur.rowcount:
                     new.append(r)
-            # Retention: nothing older than the horizon can be served again.
+            # Retention. Arrival marks are for the speech log only: nothing told is older than the horizon
+            # (_load enforces horizon >= bucket + travel + lifetime). GM drops must also keep a story out of town
+            # reputation, which remembers it longer - so they are kept for drop_retention_s() from the story's first
+            # deed (Step 2e design §11.2, Codex design R6: 197 h with today's config, not the 168 h horizon).
             old = int(pt) - self.horizon()
             self.ledger.db.execute("DELETE FROM rumour_arrivals WHERE pt < ?", (old,))
             self.ledger.db.execute(
                 """DELETE FROM rumour_drops WHERE id IN (SELECT event_id FROM events
-                   WHERE npc_id = ? AND kind = 'deed' AND json_extract(facts, '$.pt') < ?)""", (WORLD_ID, old))
+                   WHERE npc_id = ? AND kind = 'deed' AND json_extract(facts, '$.pt') < ?)""",
+                (WORLD_ID, int(pt) - self.drop_retention_s()))
         return new
 
     def drop(self, rid, now_utc):

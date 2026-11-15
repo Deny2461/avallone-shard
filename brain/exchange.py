@@ -121,6 +121,30 @@ def parse(req, common_words=frozenset()):
             "known": acquaint.parse_known(raw.get("known"))}   # A3: a read request only ({epoch, mpt, other_id}); never text
 
 
+# ---- Step 2e D1 (rumour design C2 item 9; design §8.6/§9.7; Codex design R1-7/R2 Q5) ----
+def made_up_opening(raw, flow, roster=(), common_words=frozenset()):
+    """The opening line of an exchange whose subject is a made-up story the townsperson just told: the story's STORED
+    canonical text - never the player-facing reply, history, a reputation cue or anything the request carries as text.
+    Accepts only a typed hand-off {id, source: "made_up", pt, town} naming a travelling made-up story that is live now.
+    Raises Refused otherwise (one-off lines, real deeds, GM-planted stories, forged or stale ids)."""
+    import madeup as madeup_mod
+    if not isinstance(raw, dict) or raw.get("source") != "made_up":
+        raise Refused("story source")
+    sid = str(raw.get("id") or "")
+    if not madeup_mod.MU_RE.match(sid):
+        raise Refused("story id")
+    pt, town = raw.get("pt"), str(raw.get("town") or "")[:30]
+    if flow is None or isinstance(pt, bool) or not isinstance(pt, int) or not town:
+        raise Refused("story")
+    row = flow.handoff_story(sid, pt, town)   # Codex code R1-3: current clock, canonical town, arrival
+    if row is None:
+        raise Refused("story not live here")
+    text = madeup_mod.canonical(row["text"], 0.0)
+    if not text or decency.check(text):
+        raise Refused("story text")
+    return mask_players(text[:MAX_LINE_CHARS], roster, common_words)
+
+
 # ---- Rumour step C1 (2026-11-11): the companion's ONE-LINE reaction when an NPC mentions her while telling gossip ----
 # the owner's carry-in. A reply that told gossip never starts an
 # exchange (the reply was written by a model that had the gossip in front of it, and she must not be handed gossip about

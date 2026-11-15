@@ -80,7 +80,8 @@ toward NPCs who "do their own thing".
 | 5c-2 · stage A3 | NPCs remember who they have talked with (step 1: that they met; step 2: which broad subjects, so they vary what they talk about) | ✅ |
 | 5c-2 · promise guard | A stronger guard that spots a claimed promise and rewrites a reply that gives in | ⏸️ |
 | 5c-2 · 2d | **The rumour step:** a player can correct a story about themselves; serious stories no longer drift; real stories open with one plain sentence; made-up gossip travels as stories; the companion adds a line after gossip; weather follows the game's rain and snow; speech colours ("how sure the teller is" was dropped) | ✅ |
-| 5c-2 · 2e | Rumours on the same memory model, plus a town-wide reputation | 📐 |
+| 5c-2 · 2e | **Who heard what:** NPCs stop volunteering stories you have heard, and rarely repeat them when asked; big deeds travel further; a town's **reputation** of a player; **a past for every townsperson**; gossip habits; ask about yourself; "Name, any news?" beside the crier; "bank" only near a banker; **the NPC decides whether to tell** | ✅ |
+| 5c-2 · next | Townsfolk fleshed out: **ages, households and kin**; **knowing their town** (rough directions to the bank, healer, inn); a personality that holds from visit to visit | 📐 |
 | 5c-2 · rest | More named characters in town, with their own placement file | 📐 |
 | 5c-3 | Six new named NPCs | 📐 |
 | 5d | A storyline that moves on its own over months of played time, surfacing as rumours | 📐 |

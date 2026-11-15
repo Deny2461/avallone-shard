@@ -200,6 +200,8 @@ class Offer:
         self.about = {}         # Part A: rumour id -> (character id, deed kind) of a real deed story on offer
         self.plain = False      # plain telling is in force for this reply (brain plain_telling)
         self.said = {}          # rumour id -> THE sentence that tells that real deed; the reply must begin with it (said_sentence)
+        self.hk = {}            # Step 2e: rumour id -> its suppression key ("s:<id>@<version>" / "mk:<content key>")
+        self.town = ""          # Step 2e: the town the offer was made in (goes with each delivered story)
 
     def wire(self):
         return {"sentinel": self.sentinel, "char_id": self.char_id, "descriptor": self.descriptor,
@@ -231,10 +233,28 @@ def _tail(out, off, picked, rumours, pt, speaker, rng, told=True):
     return off
 
 
+def hk_of(r):
+    """Step 2e (design §10.1): a row's suppression key - real deeds by story + version (from speech_rows), made-up and
+    one-off lines by CONTENT, whatever their instance id. None for anything else (the lore slot)."""
+    if r.get("hk"):
+        return r["hk"]
+    k = madeup_mod.key_of(r.get("id"))
+    return f"mk:{k}" if k else None
+
+
+def _split_heard(xs):
+    """Shard lists may carry legacy ids or Step 2e keys: (ids, keys)."""
+    xs = [str(x) for x in (xs or ())]
+    return {x for x in xs if not x.startswith(("s:", "mk:"))}, {x for x in xs if x.startswith(("s:", "mk:"))}
+
+
 def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentinel", rng=None, ambiguous=False,
-                 plain=False):
+                 plain=False, recent=()):
     """They named a real player. Offer only THAT person's named stories (vague ones cannot be pinned on anyone), still
-    one person per reply with the sentinel; with none, an offer that tells her she has heard nothing of them."""
+    one person per reply with the sentinel; with none, an offer that tells her she has heard nothing of them.
+    Repeat asks (the owner, chat, 2026-11-13, after Mady told the same story three times running): a story this listener heard
+    in the shard's recent window (`recent`, ids or Step 2e keys) is passed over while any other of that person's stories
+    is left; when every one was just heard, she says that is all she knows - no story, no invention."""
     rng = rng or RNG
     off = Offer()
     off.plain = bool(plain)
@@ -247,7 +267,10 @@ def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentin
     off.char_id = about or ""
     off.is_speaker = bool(about) and about == speaker
     mine = [r for r in rows or () if about and not r["vague"] and r["char"] == about]
-    mine = _weighted(mine, rumours, rng)
+    recent_ids, recent_keys = _split_heard(recent)
+    told_all = bool(mine) and all(r["id"] in recent_ids or hk_of(r) in recent_keys for r in mine)
+    mine = [] if told_all else _weighted([r for r in mine if not (r["id"] in recent_ids or hk_of(r) in recent_keys)],
+                                         rumours, rng)
     names = {str(p.get("id", "")): str(p.get("name", "")) for p in roster or () if p.get("id")}
     if off.is_speaker:
         token = "the person you are talking to"
@@ -264,6 +287,9 @@ def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentin
         lines.append("- " + rumours.render_for(r, who=token))
         picked.append(r)
         off.ids.append(r["id"])
+        if hk_of(r):
+            off.hk[r["id"]] = hk_of(r)
+        off.town = off.town or str(r.get("town") or "")
         off.keys[r["id"]] = _keys(r, rumours)
         off.about[r["id"]] = (r["char"], r["type"])
         off.own |= CLAIM_WORDS.get(r["type"], set())
@@ -288,6 +314,13 @@ def select_about(rumours, rows, pt, about, speaker, roster=(), name_mode="sentin
             out.append(f"When you mention that person, write {token} exactly as shown. Never guess or add any other name.")
         out.append("They asked after that person, an adventurer of these lands: answer what they said, and pass on "
                    "this gossip briefly.")
+    elif told_all and off.is_speaker:
+        out.append("They asked again what is said of them, and you have already told them everything you have heard of "
+                   "them: say so briefly in your own way - that is all you know. Do not tell it again, and invent nothing.")
+    elif told_all and token:
+        out.append(f"They asked after {token} again, and you have already told them everything you have heard about that "
+                   f"person: say so briefly in your own way - that is all you know. If you name them, write {token} "
+                   f"exactly. Do not tell it again, and invent nothing.")
     elif off.is_speaker:
         out.append("They asked whether you have heard anything of them: you have heard no gossip about them. Say so "
                    "briefly in your own way, and invent nothing.")
@@ -316,7 +349,7 @@ def _line(rumours, r, **kw):
 
 
 def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), name_mode="sentinel", rng=None, about="",
-           recent=(), ambiguous=False, teased=False, madeup=None, npc_id="", lore_weight=0.0, plain=False):
+           recent=(), ambiguous=False, teased=False, madeup=None, npc_id="", lore_weight=0.0, plain=False, heard=()):
     """Build the Offer for one reply, or None when there is nothing to say. `town` must already be the shard's
     region-based town (finding 4); an unknown town gives None.
 
@@ -333,22 +366,30 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
         return None
     rows = rumours.speech_rows(pt, town)
     if mode == MODE_ABOUT:
-        return select_about(rumours, rows, pt, about, speaker, roster, name_mode, rng, ambiguous=ambiguous, plain=plain)
+        return select_about(rumours, rows, pt, about, speaker, roster, name_mode, rng, ambiguous=ambiguous, plain=plain,
+                            recent=recent)
     mu = madeup is not None and mode in (MODE_NEWS, MODE_FOLLOW)
     if not rows and not mu:
         return None
     rng = rng or RNG
-    exclude = set(exclude or ())
+    # Step 2e (design §8.1/§10.1): `heard` = every key this listener was really told (durable ledger rows, any NPC);
+    # the shard's lists may carry keys too. Ids keep working for anything older.
+    exclude, ex_keys = _split_heard(exclude)
+    recent, recent_hk = _split_heard(recent)
+    heard_set = set(heard or ()) | ex_keys
     recent = set(recent or ())
     # heard-ness also goes by CONTENT for made-up lines: the same words under another id (a one-off and a travelling
     # story) are the same talk to the listener (Codex design R2)
-    heard_keys = {k for k in (madeup_mod.key_of(x) for x in exclude) if k} if mu else set()
-    recent_keys = {k for k in (madeup_mod.key_of(x) for x in recent) if k} if mu else set()
+    heard_keys = ({k for k in (madeup_mod.key_of(x) for x in exclude) if k}
+                  | {x[3:] for x in heard_set if x.startswith("mk:")}) if mu else set()
+    recent_keys = ({k for k in (madeup_mod.key_of(x) for x in recent) if k}
+                   | {x[3:] for x in recent_hk if x.startswith("mk:")}) if mu else set()
     # One weighted draw instead of fixed "own story first" (play test 2026-10-30: it ran in streaks - all Legolas,
     # never Brynn). Own story boosted; recently heard damped.
     def boost(r):
         m = OWN_BOOST if (not r["vague"] and r["char"] == speaker) else 1.0
-        heard = r["id"] in exclude or (r.get("key") is not None and r["key"] in heard_keys)
+        heard = (r["id"] in exclude or (r.get("key") is not None and r["key"] in heard_keys)
+                 or hk_of(r) in heard_set)
         return m * (HEARD_DAMP if heard else 1.0) * float(r.get("weight", 1.0))
     if mu and mode == MODE_NEWS:
         rows = rows + madeup.rows(pt, town, npc_id)
@@ -357,12 +398,13 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
         if lore_weight > 0:
             rows.append({"id": LORE_SLOT, "char": "", "type": "lore", "vague": True, "weight": float(lore_weight)})
     rows = _weighted(rows, rumours, rng, boost)
-    if mode == MODE_NEWS and (recent or recent_keys):
+    if mode == MODE_NEWS and (recent or recent_keys or recent_hk):
         # heard in the last few minutes (shard setting, default 10): never retold on "what news" (play test 5)
-        rows = [r for r in rows if r["id"] not in recent and not (r.get("key") is not None and r["key"] in recent_keys)]
+        rows = [r for r in rows if r["id"] not in recent and not (r.get("key") is not None and r["key"] in recent_keys)
+                and hk_of(r) not in recent_hk]
     if mode == MODE_GREET:
         # Unprompted: never one this player heard in the last 2 h; about anyone (the owner, chat, 2026-10-29).
-        rows = [r for r in rows if r["id"] not in exclude][:1]
+        rows = [r for r in rows if r["id"] not in exclude and hk_of(r) not in heard_set][:1]   # 2e: never re-volunteered
     elif mode == MODE_FOLLOW:
         rows = [r for r in rows if r["id"] == follow][:1]
         if not rows and mu:
@@ -387,6 +429,7 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
     # could move the name onto it. A second story rides along only if it is the same person's, or (PAIR_SHARE of "what
     # news") when BOTH stories are told with no name at all (the owner, chat, 2026-10-30).
     off = Offer()
+    off.town = str(town or "")
     off.plain = bool(plain)
     off.mode = mode
     top = rows[0]
@@ -432,6 +475,8 @@ def select(rumours, pt, town, speaker, mode, follow="", exclude=(), roster=(), n
             who = ""
         lines.append("- " + text)
         off.ids.append(r["id"])
+        if hk_of(r):
+            off.hk[r["id"]] = hk_of(r)
         if mu and (_is_text(r) or r["type"] == "gm_planted"):
             # C2 / RUM-D4: a story with no deed behind it is recognised by ITS OWN words (before this a GM-planted
             # rumour had no key words at all and was never counted as told).
@@ -725,12 +770,26 @@ def bind_asked(say, offer, roster=()):
     return out
 
 
-def wire_reply(offer, told):
+def wire_reply(offer, told, delivered=None):
     """What goes back to the shard whenever live gossip was in the prompt (Codex finding 2): always the context flag
-    (the shard then stores only the history marker), with `ids` = only the rumours really told (heard timer, caps)."""
+    (the shard then stores only the history marker), with `ids` = only the rumours really told (heard timer, caps).
+    Step 2e (design §8.1, Codex R1-2): `delivered` = the stories whose full telling is IN the words (never a teaser or a
+    follow-up thread mark), each with its suppression key and town. The shard records rumour_heard for these only,
+    and only after the line is really spoken."""
     if offer is None:
         return None
-    return {**offer.wire(), "ids": list(told)}
+    out = {**offer.wire(), "ids": list(told)}
+    got = [{"story": str(i), "hk": offer.hk[i], "town": offer.town}
+           for i in (delivered or ()) if i in offer.hk and offer.town]
+    if got:
+        out["delivered"] = got[:4]
+    # Step 2e D1 (Codex code R1-2): hand-off eligibility is decided HERE, while the whole offer is still known - the
+    # shard only ever sees what was told, so it could not tell a made-up story told alone from one offered beside a
+    # real deed. Eligible: exactly one story was on offer, it is a travelling made-up story, and it was fully delivered.
+    if (len(offer.ids) == 1 and [g["story"] for g in got] == list(offer.ids)
+            and madeup_mod.MU_RE.match(str(offer.ids[0])) and offer.source.get(offer.ids[0]) == madeup_mod.T_STORY):
+        out["handoff"] = {"story": str(offer.ids[0]), "source": "made_up"}
+    return out
 
 
 def guard(offer, rumour_context, mode=""):

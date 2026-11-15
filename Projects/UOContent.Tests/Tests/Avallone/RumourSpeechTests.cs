@@ -283,6 +283,198 @@ public class RumourSpeechTests
         }
     }
 
+    // Step 2e (the owner's play test 2, 2026-11-13): got general gossip.
+    [Theory]
+    [InlineData("any rumours about me?", true)]
+    [InlineData("What have you heard about me?", true)]
+    [InlineData("what do people say about me", true)]
+    [InlineData("Have you heard of me?", true)]
+    [InlineData("any news of me", true)]
+    [InlineData("what is my reputation here?", true)]
+    [InlineData("Am I known in these parts?", true)]
+    [InlineData("tell me about yourself", false)]
+    [InlineData("do you know me?", false)]
+    [InlineData("what news?", false)]
+    [InlineData("talk to me about the bank", false)]
+    [InlineData("I heard the news. Give me a bow", false)]
+    [InlineData("any rumours about me", true)]                   // no punctuation: still a question
+    [InlineData("Don't talk about me.", false)]                  // Codex code R7 finding 1: requests for silence
+    [InlineData("Stop talking about me.", false)]
+    [InlineData("Please say nothing about me.", false)]
+    [InlineData("do not spread tales of me", false)]
+    [InlineData("Keep quiet about me, would you?", false)]
+    [InlineData("no more gossip about me", false)]
+    [InlineData("Don't you know of me?", true)]                  // "don't" + know is a question, not a stop
+    [InlineData("Don't ever talk about me.", false)]             // Codex code R8: modified stop requests
+    [InlineData("Stop all this gossip about me.", false)]
+    [InlineData("Don't keep talking about me.", false)]
+    [InlineData("Don't you dare say a word about me", false)]
+    [InlineData("Folk talk about me too much.", false)]          // a statement, not a request to hear
+    [InlineData("Mady, what have you heard about me", true)]     // an ask after her name, unpunctuated
+    [InlineData("Never mind that - what have you heard about me?", true)]
+    [InlineData("Have you never heard what they say about me?", true)]
+    [InlineData("Don't you know what they say about me?", true)]
+    public void AboutMeQuestions(string line, bool aboutMe) => Assert.Equal(aboutMe, RumourSpeech.IsAboutMe(line));
+
+    [Theory]
+    [InlineData("Don't talk about me.")]
+    [InlineData("Stop talking about me.")]
+    [InlineData("Please say nothing about me.")]
+    [InlineData("Don't gossip about Brynn Handy.")]              // a named player too: silence wins over the name
+    [InlineData("stop spreading rumours about brynn")]
+    [InlineData("Don't ever talk about me.")]                    // Codex code R8
+    [InlineData("Stop all this gossip about me.")]
+    [InlineData("Don't keep talking about me.")]
+    public void ARequestForSilenceIsNeverAGossipRequest(string line)
+    {
+        RumourSpeech.ResetForTests(true);
+        var p = NewPlayer("Gabby Johnson");
+        var brynn = NewPlayer("Brynn Handy");
+        var npc = NewNpc();
+        try
+        {
+            AiIdentity.GetOrCreate(p);
+            AiIdentity.GetOrCreate(brynn);
+            Assert.True(RumourSpeech.IsStopTalk(line));
+            Assert.Null(RumourSpeech.Ask(npc, p, line, false, null, "Britain"));       // ordinary turn: no rumour block
+            Assert.Null(RumourSpeech.Ask(npc, p, line, false, "42-1", "Britain"));     // nor a follow-up of a story
+        }
+        finally
+        {
+            p.Delete();
+            brynn.Delete();
+            npc.Delete();
+            RumourSpeech.ResetForTests(false);
+        }
+    }
+
+    [Theory]
+    // Codex code R9 (third round on this routing): judged by sentence SHAPE - an order at a clause start, a request that
+    // opens like an ask. Every case Codex reported in R7, R8 and R9, through Ask, with and without an open story thread.
+    // self = about the speaker; named = about Brynn Handy; stop/ordinary = no rumour block; news = general news.
+    [InlineData("any rumours about me?", "self")]
+    [InlineData("Mady, what have you heard about me", "self")]
+    [InlineData("Don't you know of me?", "self")]
+    [InlineData("Never mind that - what have you heard about me?", "self")]
+    [InlineData("Can you tell me what people say about me", "self")]
+    [InlineData("Could you tell me any rumours about me", "self")]
+    [InlineData("Please tell me any rumours about me", "self")]
+    [InlineData("Please tell me what people say about me", "self")]
+    [InlineData("Would you tell me what people say about me", "self")]
+    [InlineData("Have you never heard any gossip about me?", "self")]
+    [InlineData("Have you never heard anyone talk about me?", "self")]
+    [InlineData("Don't you have gossip about me?", "self")]
+    [InlineData("Don\u2019t you have gossip about me?", "self")]
+    [InlineData("Have you never heard any gossip about Brynn Handy?", "named")]
+    [InlineData("Do you know Brynn Handy?", "named")]
+    [InlineData("Don't talk about me.", "stop")]
+    [InlineData("Stop talking about me.", "stop")]
+    [InlineData("Please say nothing about me.", "stop")]
+    [InlineData("Don't ever talk about me.", "stop")]
+    [InlineData("Stop all this gossip about me.", "stop")]
+    [InlineData("Don't keep talking about me.", "stop")]
+    [InlineData("Don\u2019t ever talk about me.", "stop")]
+    [InlineData("Mady, don't talk about me", "stop")]
+    [InlineData("Don't you tell anyone about me", "stop")]
+    [InlineData("Keep quiet about me, would you?", "stop")]
+    [InlineData("Not a word about me, mind.", "stop")]
+    [InlineData("Don't gossip about Brynn Handy.", "stop")]
+    [InlineData("Have you never heard any gossip about Brynn Handy? Stop talking about me.", "stop")]
+    [InlineData("Folk talk about me too much.", "ordinary")]
+    [InlineData("I'd rather you didn't talk about me", "ordinary")]
+    // Codex code R10: polite requests to stop (self, named, vocative, unpunctuated) and asks that must survive
+    [InlineData("Could you stop talking about me?", "stop")]
+    [InlineData("Can you stop spreading rumours about me?", "stop")]
+    [InlineData("Would you please stop spreading rumours about me", "stop")]
+    [InlineData("Mady, could you stop talking about me?", "stop")]
+    [InlineData("Could you stop talking about Brynn Handy?", "stop")]
+    [InlineData("I'd like you to stop talking about me", "stop")]
+    [InlineData("Could you please not talk about me?", "stop")]
+    [InlineData("Would you mind not talking about me?", "stop")]
+    [InlineData("Please don't talk about me", "stop")]
+    [InlineData("Stop it with the gossip about me", "stop")]
+    [InlineData("Promise never to speak of me", "stop")]
+    [InlineData("Will you quit telling tales of me?", "stop")]
+    [InlineData("Can you tell me what people say about me, or have they stopped?", "self")]
+    [InlineData("Have you not heard anyone talk about me?", "self")]
+    [InlineData("Did you not hear the talk about me?", "self")]
+    [InlineData("Could you tell me what they're saying about me", "self")]
+    [InlineData("Could you tell me any news?", "news")]
+    [InlineData("Never mind, any news?", "news")]
+    [InlineData("Don't stop now, any news?", "news")]
+    public void RoutingBySentenceShape(string line, string want)
+    {
+        RumourSpeech.ResetForTests(true);
+        var p = NewPlayer("Gabby Johnson");
+        var brynn = NewPlayer("Brynn Handy");
+        var npc = NewNpc();
+        try
+        {
+            var me = AiIdentity.GetOrCreate(p).ToString();
+            var bid = AiIdentity.GetOrCreate(brynn).ToString();
+            foreach (var follow in new[] { null, "42-1" })
+            {
+                var ask = RumourSpeech.Ask(npc, p, line, false, follow, "Britain");
+                switch (want)
+                {
+                    case "self":
+                        Assert.Equal("about", ask?.Mode);
+                        Assert.Equal(me, ask.About);
+                        break;
+                    case "named":
+                        Assert.Equal("about", ask?.Mode);
+                        Assert.Equal(bid, ask.About);
+                        break;
+                    case "news":
+                        Assert.Equal("news", ask?.Mode);
+                        break;
+                    default:                                             // stop / ordinary: an ordinary turn
+                        Assert.Null(ask);
+                        break;
+                }
+            }
+
+            Assert.Equal(want == "stop", RumourSpeech.IsStopTalk(line));
+        }
+        finally
+        {
+            p.Delete();
+            brynn.Delete();
+            npc.Delete();
+            RumourSpeech.ResetForTests(false);
+        }
+    }
+
+    [Fact]
+    public void AskingAboutYourselfIsAboutYou()
+    {
+        RumourSpeech.ResetForTests(true);
+        var p = NewPlayer("Gabby Johnson");
+        var brynn = NewPlayer("Brynn Handy");
+        var npc = NewNpc();
+        try
+        {
+            var me = AiIdentity.GetOrCreate(p).ToString();
+            var bid = AiIdentity.GetOrCreate(brynn).ToString();
+            var ask = RumourSpeech.Ask(npc, p, "any rumours about me?", false, null, "Britain");
+            Assert.Equal("about", ask.Mode);
+            Assert.Equal(me, ask.About);                                        // the asker's own stories
+            Assert.False(ask.Ambiguous);
+            var named = RumourSpeech.Ask(npc, p, "any rumours about me or Brynn Handy?", false, null, "Britain");
+            Assert.Equal(bid, named.About);                                     // a named player still wins
+            Assert.Equal("news", RumourSpeech.Ask(npc, p, "any rumours?", false, null, "Britain").Mode);
+            // a reply carrying "about" gossip is spoken for it
+            Assert.Equal("Hm.", RumourSpeech.Fill(npc, p, Reply("Hm.", new RumourInfo("", "", "", ["1-9"], "about")), "Britain", ask, bind: true));
+        }
+        finally
+        {
+            p.Delete();
+            brynn.Delete();
+            npc.Delete();
+            RumourSpeech.ResetForTests(false);
+        }
+    }
+
     [Fact]
     public void AStoryJustHeardIsSentAsRecent()
     {

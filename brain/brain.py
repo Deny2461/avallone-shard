@@ -50,6 +50,7 @@ import acquaint  # noqa: E402  (Stage A3 2026-11-10: who an NPC has traded lines
 import topics  # noqa: E402  (Stage A3 step 2: which broad subjects came up - keywords, no model call)
 import weather  # noqa: E402  (one weather per day for every NPC - the owner's step 2 play test)
 import nature  # noqa: E402  (Step B 2026-11-08: a nature (personality) per ordinary NPC)
+import backgrounds  # noqa: E402  (Step 2e: home, former life, one past event per ordinary NPC - stored on first need)
 import party  # noqa: E402  (Stage A1 2026-11-09: who travels with the player)
 import exchange  # noqa: E402  (Stage A2 2026-11-09: a spoken exchange between two AI characters, public only)
 
@@ -141,7 +142,14 @@ DEFAULTS = {
     # sentence itself. Off = the prompt and the heard mark as before. Taking corrections implies it: a correction-ticket
     # mark only ever rests on that exact sentence.
     "plain_telling": False,
+    # Step 2e (Codex code R7-R11; the owner, chat, 2026-11-13: - the NPC decides): on a turn with a story on offer the
+    # model must choose "tell" or "keep" in a JSON field; on anything but "tell" the brain forces NO story into the reply
+    # (no plain-telling sentence, no fixed made-up wording, no teaser, no kept thread). False = the behaviour before.
+    "rumour_story_choice": True,
     "rumour_corrections_shown": True,
+    # Step 2e (design §8.1/§8.9): read the listener's durable "already heard" record (rumour_heard rows) when choosing
+    # gossip. Off = choose exactly as before (the shard's short-term memory only). Recording is the shard's switch.
+    "rumour_heard_read": True,
     "exchange_max_tokens": 60,
     "rumour_pair_share": 0.35,    # "what news": two different people's stories, both name-free (Codex finding 1)
     "rumour_live_share": 0.25,   # the owner, chat, 2026-10-30:
@@ -248,15 +256,31 @@ ACTION_TEXT = {
 ACTION_KEY = re.compile(r"^[a-z_]{1,20}$")
 
 
-def reply_schema(actions):
-    if not actions:
+def reply_schema(actions, story=False):
+    if not actions and not story:
         return REPLY_SCHEMA
-    # action first: if the token budget runs out, it is the speech that gets cut, not the decision.
-    return {
-        "type": "object",
-        "properties": {"action": {"type": "string", "enum": list(actions)}, "say": {"type": "string"}},
-        "required": ["action", "say"],
-    }
+    # decisions first: if the token budget runs out, it is the speech that gets cut, not the decision.
+    props, req = {}, []
+    if story:
+        props["story"], req = {"type": "string", "enum": list(STORY_CHOICES)}, req + ["story"]
+    if actions:
+        props["action"], req = {"type": "string", "enum": list(actions)}, req + ["action"]
+    props["say"] = {"type": "string"}
+    return {"type": "object", "properties": props, "required": req + ["say"]}
+
+
+# Step 2e (Codex code R11: no word list can tell "tell me" from "don't tell" in all of English - the NPC decides). Shown
+# only on a turn with a story on offer; the brain acts on the field, never on reading the reply's words.
+STORY_CHOICES = ("tell", "keep")
+STORY_CHOICE = ('Choose in the JSON field "story": "tell" to pass on the gossip above, or "keep" if they asked you not to '
+                'talk about it, about themselves or about that person, or not to gossip or spread tales at all - then say '
+                'nothing of it, and answer them in your own way. If they asked nothing of the kind, choose "tell".')
+
+
+def story_told(choice):
+    """Only an explicit "tell" lets the brain put a story into the reply; anything else - "keep", missing, garbled -
+    is keep (when in doubt, silence)."""
+    return choice == "tell"
 
 
 def actions_block(actions):
@@ -531,6 +555,10 @@ MADEUP = None   # rumour step C2; needs RUMOURS. Used only while the madeup_flow
 LORE_TOLD = {}  # C2: player id -> time.monotonic() when the lore's rumour pages were last their "what news" answer
 
 
+SCEPTIC_LINES = ("If you believe that sort of thing.", "Mind, I only half believe it.",
+                 "Though folk will say anything.", "Make of that what you will.")
+
+
 def plain_telling():
     return bool(CFG.get("plain_telling") or CFG.get("rumour_corrections"))
 
@@ -639,7 +667,8 @@ class GarbledReply(ValueError):
 
 
 def ollama_chat(persona, utterance, timeout_s, history=(), nudge=None, knowledge="", situation="", actions=(),
-                memories="", stats=None, max_tokens=None, max_chars=240, standing="", layout=None, recalled=()):
+                memories="", stats=None, max_tokens=None, max_chars=240, standing="", layout=None, recalled=(),
+                story=False):
     """Returns (say, action). action is "none" when no actions were offered. Fills `stats` (token counts, timings).
 
     `standing` = what holds for the whole conversation (beliefs, the secret hint); `memories` = what was retrieved
@@ -682,8 +711,9 @@ def ollama_chat(persona, utterance, timeout_s, history=(), nudge=None, knowledge
         "model": CFG["model"],
         "stream": False,
         "keep_alive": CFG["keep_alive"],
-        "format": reply_schema(actions),
-        "options": {"num_predict": (max_tokens or CFG["max_tokens"]) + (20 if actions else 0), "temperature": CFG["temperature"],
+        "format": reply_schema(actions, story),
+        "options": {"num_predict": (max_tokens or CFG["max_tokens"]) + (20 if actions else 0) + (8 if story else 0),
+                    "temperature": CFG["temperature"],
                     **runner_options()},
         "messages": messages,
     }
@@ -732,6 +762,8 @@ def ollama_chat(persona, utterance, timeout_s, history=(), nudge=None, knowledge
             "prefix_sha": hashlib.sha256((SYSTEM_RULES + "\n\n" + persona if layout != "v2" else head)
                                          .encode()).hexdigest()[:12],
         })
+    if story and stats is not None:
+        stats["story"] = str(parsed.get("story") or "")[:8]   # read by code as a choice; anything odd counts as "keep"
     if not actions:
         return say, "none"
     action, suppressed = guard_action(pick_action(parsed, actions), utterance)
@@ -1187,6 +1219,28 @@ class Handler(BaseHTTPRequestHandler):
                     nat_block = nature.prompt_block(nature.of(npc), nat_habit)
                     if nat_block:
                         persona = dict(persona, text=persona["text"] + "\n" + nat_block)
+                    # Step 2e (design §8.5): the NPC's own past - assigned once, stored, always in when asked about;
+                    # otherwise only in the one shared flourish slot. A problem costs the line, never the reply.
+                    try:
+                        bg_line = ""
+                        pv = req.get("persona_vars") or {}
+                        if LEDGER is not None and (nature.cfg().get("backgrounds") or {}).get("enabled") and pv.get("town"):
+                            # Codex code R6: on a gossip follow-up turn only a question plainly about the NPC itself
+                            # counts ("what happened before that?" is about the story, not about them).
+                            following = str((req.get("rumours") or {}).get("mode") or "") == "follow"
+                            asked_now = (backgrounds.asked_self(utterance) if following
+                                         else backgrounds.asked(utterance))
+                            shown = asked_now or nature.background_in_prompt(
+                                npc, req.get("subject_id"), rid,
+                                slot_taken=bool(nat_habit) and nature.habit_is_flourish(nature.of(npc)))
+                            if shown:
+                                bg = backgrounds.assign(LEDGER, npc, str(pv.get("town")), str(pv.get("role") or ""),
+                                                        str(pv.get("trade") or ""), log=log)
+                                bg_line = backgrounds.prompt_line(backgrounds.text(bg, str(pv.get("town"))), asked_now)
+                        if bg_line:
+                            persona = dict(persona, text=persona["text"] + "\n" + bg_line)
+                    except Exception as e:
+                        log(event="backgrounds", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
             else:
                 persona = {"key": None, "groups": [], "town": "", "exclude": [],
                            "text": str(req.get("persona") or "")[:4000]}
@@ -1429,15 +1483,24 @@ class Handler(BaseHTTPRequestHandler):
                 log(event="mood", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
         # Phase 5b: live rumours for townsfolk + Mirabel (never companions: they are v2 and have their own memory).
         offer, rask, roster = None, req.get("rumours") or {}, []
+        # Step 2e play test (the owner, 2026-11-13): right after a story was taken as a gossip follow-up
+        # (the shard's follow-up words include "where") and got "That is all I know of it." A question about the NPC's
+        # OWN past is never a story follow-up: drop the thread, answer as an ordinary turn (its background is in the prompt).
+        if str(rask.get("mode") or "") == "follow" and backgrounds.asked_self(utterance):   # Codex code R6: strict
+            log(event="rumour", op="follow", request_id=rid, npc=npc, outcome="dropped", why="a question about their own past")
+            rask = {}
         # 5c-2 2c (M7.6): the ONE greeting-gossip draw, here because the brain knows the mood. Only when the 2c shard
         # says it did not roll (an older shard still rolls 1 in 4 itself - no second gate). A miss = exactly what the
         # shard's own miss was: no rumour block at all this turn.
         stranger_pass = False
         if rask and str(rask.get("mode") or "") == "greet" and rask.get("greet_unrolled") is True and not v2:
             scale = dials.greet_scale(dial)   # Step B (the owner, 2026-11-08): a stranger gets 1/6 of the normal rate
+            gossip_habit = (nature.of(npc) or {}).get("gossip", "plain") if req.get("persona_vars") else "plain"
+            if gossip_habit == "gossip":     # Step 2e (design A3): a gossip volunteers twice as readily
+                scale = scale * 2.0
             pct = mood.greet_percent(md) * scale
-            if not mood.greet_draw(md, scale=scale):
-                rask = {}
+            if gossip_habit == "cautious" or not mood.greet_draw(md, scale=scale):
+                rask = {}                    # Step 2e: a cautious NPC tells only when asked
             stranger_pass = bool(rask) and scale < 1.0
             log(event="rumour", op="greet_draw", request_id=rid, npc=npc, percent=round(pct, 2), hit=bool(rask),
                 mood=md["band"] if md else None, stranger=scale < 1.0)
@@ -1493,7 +1556,9 @@ class Handler(BaseHTTPRequestHandler):
                                              recent=[str(x) for x in (rask.get("recent") or [])][:50],
                                              ambiguous=rask.get("ambiguous") is True,
                                              madeup=flow, npc_id=str(npc or ""), lore_weight=lore_w,
-                                             plain=plain_telling())
+                                             plain=plain_telling(),
+                                             heard=(RUMOURS.heard_keys(str(subject or ""))
+                                                    if CFG.get("rumour_heard_read", True) else ()))
                 if offer is rumour_speech.LORE_TURN:   # C2: the draw chose the lore pages - told from them, as before
                     offer, lore_turn = None, True
                     note_lore(subject)
@@ -1612,13 +1677,18 @@ class Handler(BaseHTTPRequestHandler):
             wx = weather.line(acquaint.central_today(cards.CENTRAL), CFG.get("shared_weather", False), falling, real_wx)
             if wx:
                 situation = (situation + "\n\n" + wx).strip()
+        story_on = bool(CFG.get("rumour_story_choice", True) and offer is not None and (offer.ids or offer.tease))
+        if story_on:
+            situation = (situation + "\n\n" + STORY_CHOICE).strip()
+        gen_story = {"story": True} if story_on else {}
         stats = {}
         try:
             # "about": the model sees the sentinel where the line named the person, so question and gossip match.
             model_utt = rumour_speech.bind_asked(utterance, offer, roster) if offer is not None else utterance
             try:
                 say, action = ollama_chat(persona, model_utt, timeout_s, history, knowledge=knowledge,
-                                          situation=situation, actions=actions, memories=memories, stats=stats, **gen)
+                                          situation=situation, actions=actions, memories=memories, stats=stats, **gen,
+                                          **gen_story)
             except GarbledReply as e:
                 # the owner, chat, 2026-11-02: one more try when the reply came back garbled, if there is time.
                 left = timeout_s - (time.monotonic() - start)
@@ -1628,7 +1698,9 @@ class Handler(BaseHTTPRequestHandler):
                     left_ms=int(left * 1000))
                 stats = {}
                 say, action = ollama_chat(persona, model_utt, left, history, knowledge=knowledge,
-                                          situation=situation, actions=actions, memories=memories, stats=stats, **gen)
+                                          situation=situation, actions=actions, memories=memories, stats=stats, **gen,
+                                          **gen_story)
+            story_choice = stats.get("story", "") if story_on else ""   # follows whichever reply is finally kept
             filtered, first_try, binding = None, None, None
 
             def refused(text):
@@ -1665,7 +1737,7 @@ class Handler(BaseHTTPRequestHandler):
                 if left < 1.5:
                     if why.startswith("decency"):
                         say, action, why = decency.fixed_line(rid), "none", None   # no time: the fixed line at once
-                        decency_line = True
+                        decency_line, story_choice = True, ""
                     else:
                         raise ValueError(f"filtered ({why}), no time to retry: {say!r}")
                 if why:
@@ -1674,15 +1746,17 @@ class Handler(BaseHTTPRequestHandler):
                         (f", and write {offer.sentinel} exactly." if offer and offer.sentinel else "."))
                     say, action = ollama_chat(persona, model_utt, left, history, nudge=nudge, knowledge=knowledge,
                                               situation=situation, actions=actions, memories=memories, stats=stats,
-                                              **gen)
+                                              **gen, **gen_story)
+                    story_choice = stats.get("story", "") if story_on else ""
                     say, why2 = settle(say)
                     if why2 and (why.startswith("decency") or why2.startswith("decency")):
                         say, action = decency.fixed_line(rid), "none"   # a second refusal always ends in the fixed line
-                        decency_line = True
+                        decency_line, story_choice = True, ""
                     elif why2 and offer is not None and offer.mode == "follow":
                         # Codex 2a finding 2: a bounded answer instead of silence on a follow-up
                         log(event="rumour", op="follow_fallback", request_id=rid, why=why, why2=why2)
                         say, action = rumour_speech.follow_fallback(offer, utterance), "none"
+                        story_choice = ""   # a code-written fallback line tells nothing
                     elif why2:
                         raise ValueError(f"filtered twice ({why}/{why2}): {filtered!r} / {say!r}")
             # Step B (the owner's play test 2026-11-08): a reply that opens like a recent
@@ -1725,9 +1799,10 @@ class Handler(BaseHTTPRequestHandler):
                     retried = None
                     if left >= 1.5:
                         try:
+                            st2 = {}
                             s2, a2 = ollama_chat(persona, model_utt, left, history, nudge=MOOD_NUDGE,
                                                  knowledge=knowledge, situation=situation, actions=actions,
-                                                 memories=memories, stats={}, **gen)
+                                                 memories=memories, stats=st2, **gen, **gen_story)
                             s2, w2 = settle(s2)
                             if not w2:
                                 retried, action = s2, a2
@@ -1735,9 +1810,15 @@ class Handler(BaseHTTPRequestHandler):
                             mood_log["retry_error"] = type(e).__name__
                     if retried is not None and not mood.excuse(retried):
                         say, mood_log["fixed"] = retried, "retry"
+                        story_choice = st2.get("story", "") if story_on else ""
                     else:
                         cut = mood.strip_excuses(retried if retried is not None else say)
                         say, mood_log["fixed"] = (cut or MOOD_FALLBACK), "cut" if cut else "fallback"
+                        # Codex code R12-1: the choice belongs to the reply the words came from - the retry's when what
+                        # is kept is cut from the retry (missing = keep); none at all for the code-written fallback
+                        if story_on:
+                            story_choice = ("" if not cut else
+                                            st2.get("story", "") if retried is not None else story_choice)
                 # Cause clause (M7.5): only on "how are you?", rendered by code from the source that really moves the
                 # deciding axis now; none -> no explanation. Then at most one bracketed action (M7.6).
                 clause = mood.cause_clause(md) if mood.asks_how(utterance) else ""
@@ -1767,7 +1848,10 @@ class Handler(BaseHTTPRequestHandler):
                                                req.get("persona_vars"), final_max - tease_room)
             # Codex r3 R2-4: the FINAL reply never passes REPLY_MAX_CHARS. Priority: the answer > the tease > the shop line.
             # A tease that does not fit is dropped and NOT counted as told.
-            tease = offer.tease if offer is not None and offer.tease and not (binding or "").startswith("decency") else ""
+            # Step 2e: with the choice on, nothing of a story is added by code unless the NPC chose "tell"
+            may_add = (not story_on) or story_told(story_choice)
+            tease = (offer.tease if offer is not None and offer.tease and not (binding or "").startswith("decency")
+                     and may_add else "")
             if tease and len(say) + 1 + len(tease) > final_max and hint_note == "added":
                 say, hint_note = pre_hint, "no_room"
             tease_dropped = bool(tease) and len(say) + 1 + len(tease) > final_max
@@ -1777,7 +1861,7 @@ class Handler(BaseHTTPRequestHandler):
             if len(say) > final_max:
                 say = clean(say, final_max)
             plain_fixed = ""
-            if (offer and offer.said and not reveal_id and not (binding or "").startswith("decency")
+            if (offer and offer.said and not reveal_id and not (binding or "").startswith("decency") and may_add
                     and not rumour_speech.used(say, offer, strict=True)):
                 # Plain telling (Codex code R5): the reply did not begin with the sentence the code wrote for this
                 # story. Nothing is read out of what it said instead: the brain says the sentence itself. The NPC's
@@ -1800,7 +1884,7 @@ class Handler(BaseHTTPRequestHandler):
             # Part A: what the reply REALLY told (before a follow-up / tease is counted in) - always the strict reading
             told_by_words = list(told) if plain_telling() else rumour_speech.used(say, offer, strict=True)
             canon_used = False
-            if (offer and offer.mode == "news" and offer.canon and not told and not reveal_id
+            if (offer and offer.mode == "news" and offer.canon and not told and not reveal_id and may_add
                     and not (binding or "").startswith("decency")):
                 # C2 / Codex design R2: a nameless story (made-up, one-off, GM-planted) was on offer and the reply does
                 # not show it was told. Never leave it spoken-but-unmarked or silently lost: say it in the fixed, checked
@@ -1815,7 +1899,17 @@ class Handler(BaseHTTPRequestHandler):
                         and not decency.check(fixed):
                     canon_model_said = say[:200]
                     say, told, canon_used = fixed, offer.ids[:1], True
-            if offer and (offer.mode == "follow" or (tease and not tease_dropped)) and not told:
+            # Step 2e (design A3): a sceptic adds one fixed line of doubt after a story it really told - written by code,
+            # never asked of the model, checked like any line, and outside the story's version (the canonical sentence).
+            delivered_now = offer.ids[:1] if canon_used else told_by_words
+            if (offer and delivered_now and req.get("persona_vars")
+                    and (nature.of(npc) or {}).get("gossip") == "sceptic"):
+                doubt = SCEPTIC_LINES[int(hashlib.sha256(str(rid).encode("utf-8")).hexdigest(), 16) % len(SCEPTIC_LINES)]
+                cand = (say.rstrip() + " " + doubt) if say.rstrip()[-1:] in ".!?" else (say.rstrip() + ". " + doubt)
+                if (len(cand) <= final_max and rumour_speech.check(cand, offer, roster, RUMOUR_WORDS) is None
+                        and not decency.check(cand)):
+                    say = cand
+            if offer and may_add and (offer.mode == "follow" or (tease and not tease_dropped)) and not told:
                 told = list(offer.ids)   # a follow-up keeps the thread even without the key words; a tease counts
             ms = int((time.monotonic() - start) * 1000)
             spoken = ({"secret": reveal_id, "say_sha": companion_secrets.fingerprint(say),
@@ -1830,6 +1924,8 @@ class Handler(BaseHTTPRequestHandler):
                 **({"name_scrubbed": True} if gen_scrubbed else {}),
                 **({"shop_hint": hint_note} if hint_note else {}),
                 **({"tease_dropped": True} if tease_dropped else {}),
+                # Step 2e: the NPC's own tell/keep choice ("" = missing, counted as keep) on a turn with a story on offer
+                **({"story_choice": story_choice} if story_on else {}),
                 **({"mood": mood_log} if mood_log else {}),
                 **({"habit_in_prompt": nat_habit} if nat_habit is not None else {}),
                 **({"falling": falling} if falling and real_wx else {}),
@@ -1851,7 +1947,10 @@ class Handler(BaseHTTPRequestHandler):
             if mem_cards:   # 5c-2 2a: the shard records these (ids only) once the reply is really delivered
                 out["memory_cards"] = mem_cards
             if offer:   # Codex finding 2: always flag live-gossip context; ids = only what was really told
-                out["rumour"] = rumour_speech.wire_reply(offer, told)
+                # Step 2e (design §8.1): only what the words really told - or the fixed wording the brain itself said -
+                # is a delivery; a teaser or a follow-up thread mark never is.
+                out["rumour"] = rumour_speech.wire_reply(offer, told,
+                                                         delivered=(offer.ids[:1] if canon_used else told_by_words))
                 # Part A: this reply really told exactly ONE story, a real deed of the player it is said to. The shard
                 # may keep a correction ticket for it (its own switch and checks decide).
                 story = correctable(offer, told, told_by_words, str(subject or ""))
@@ -2012,6 +2111,14 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # Rumour step C1: a reaction is parsed by its own reader, which never looks at a transcript.
             ask = exchange.parse_reaction(req, RUMOUR_WORDS) if react else exchange.parse(req, RUMOUR_WORDS)
+            # Step 2e D1: a made-up story the townsperson just told is the exchange's subject - its first line is the
+            # story's stored text, resolved here from a typed id; whatever text the request carries there is replaced.
+            story_raw = (req.get("exchange") or {}).get("story")
+            if story_raw is not None and not react:
+                if not CFG.get("madeup_handoff", True):
+                    raise exchange.Refused("made-up hand-off is switched off")
+                ask["transcript"][0]["text"] = exchange.made_up_opening(story_raw, MADEUP, ask["roster"], RUMOUR_WORDS)
+                ask["story"] = str(story_raw.get("id"))
             tag = {"exchange": ask["id"], "step": ask["step"], "speaker": ask["speaker"]["kind"],
                    **({"react": ask["react"]} if react else {})}
             persona = load_persona(req.get("persona_key"))
@@ -2165,15 +2272,16 @@ class Handler(BaseHTTPRequestHandler):
                 # talked_with. The shard writes and delivers such rows only to a brain that says so here.
                 # Rumour step, Part A: ... and the record kind "rumour_corrected" (a property of this build's
                 # ingest, not of the rumour_corrections switch).
+                # Step 2e (design §9.1): ... and "rumour_heard" (capability 3) - also a property of the build, not a switch.
                 self.send_json(200, {"ok": True, "acked": acked, "rejected": rejected, "talked_with_topics": 1,
-                                     "rumour_corrected": 1})
+                                     "rumour_corrected": 1, "rumour_heard": 1})
             elif op == "reconcile":
                 verdict, rolled, reason = LEDGER.reconcile(req["new_epoch"], req["saved_epoch"], req["saved_seq"],
                                                            req.get("outbox_min_seq"))
                 log(event="memory", op="reconcile", outcome=verdict, rolled_back=rolled, reason=reason,
                     new_epoch=req["new_epoch"], saved_epoch=req["saved_epoch"], saved_seq=req["saved_seq"])
                 self.send_json(200, {"ok": True, "verdict": verdict, "rolled_back": rolled, "reason": reason,
-                                     "talked_with_topics": 1, "rumour_corrected": 1})
+                                     "talked_with_topics": 1, "rumour_corrected": 1, "rumour_heard": 1})
             elif op == "status":
                 self.send_json(200, {"ok": True, **LEDGER.status(req.get("npc_id"), req.get("char_id"))})
             else:
@@ -2313,6 +2421,13 @@ def main():
         try:
             RUMOURS = rumours.Rumours(LEDGER, CFG["rumours_config"])
             RUMOURS.show_corrections = bool(CFG.get("rumour_corrections_shown", True))
+            backgrounds.ensure_table(LEDGER)   # Step 2e: stored NPC pasts (additive table; an older brain ignores it)
+            if CFG.get("rumour_heard_read", True) and not plain_telling():
+                # Step 2e (Codex code R1-1): a real deed counts as DELIVERED only when its exact sentence was said, and
+                # that sentence exists only with plain telling. Without it, only made-up stories are recorded - said here.
+                log(event="rumour", op="heard", outcome="limited",
+                    reason="plain telling is off (plain_telling / rumour_corrections): real-deed deliveries are not "
+                           "recorded as heard; made-up stories still are")
             if RUMOURS.lists_error:
                 log(event="rumour", op="corrections", outcome="unavailable", error=RUMOURS.lists_error)
         except Exception as e:  # a bad rumours.json switches rumours off, never the brain

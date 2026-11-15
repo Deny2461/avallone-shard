@@ -28,7 +28,8 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
 - **You can just talk.** Walk up to Mirabel, innkeeper of the Blue Boar in Britain, and say anything. She
   answers in character, in the Samurai Empire era, in a sentence or two.
 - **Every shopkeeper has a voice.** Ordinary townsfolk answer too, through one shared townsperson persona.
-  Real shop words still work as normal (`vendor buy`, `bank`, `stable`).
+  Real shop words still work as normal (`vendor buy`, `bank`, `stable`). "Bank" counts as the bank command only
+  near a banker, and the town crier only hears "news" from a few steps away, so "Mady, any news?" goes to Mady.
 - **You don't have to say their name.** Once you start talking with someone, lines that name nobody keep
   going to them until you name someone else, say goodbye, walk away or go quiet for a few minutes. With no
   conversation going, the nearest person answers.
@@ -41,13 +42,25 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
 - **People remember.** Named NPCs remember what you told them, what you gave them and how often you visit.
   A regular is greeted differently from a stranger.
 - **News travels.** Kill something notable, get drunk in the tavern or come back after a long absence, and
-  the story spreads town to town along the roads. A funny story grows a little as it goes; a death, a murder or a
-  great deed is told as it happened. All of it fades with time.
+  the story spreads town to town along the roads. Big deeds travel further and faster than small ones. A funny story
+  grows a little as it goes; a death, a murder or a great deed is told as it happened. All of it fades with time.
+- **They know what you have already heard.** An NPC greeting you never brings up a story anyone has already told you.
+  Ask for news and one you heard in the last ten minutes is not told again; one you heard earlier is a quarter as
+  likely to come up, but can. A story that has changed since counts as new.
 - **You can set the record straight.** When someone has just told you a story about yourself, your next line can
   correct a detail: how many, what, or where ("It was four, not forty."). They take your word for it, and that is the
   version told from then on. A murder or a death cannot be talked away.
 - **Idle gossip travels too.** The made-up talk of the towns (the price of bread, a wagon with a broken axle) now moves
   from town to town as stories you can ask more about, alongside the real news.
+- **Ask about yourself, or ask them not to.** Ask what people say about you and you hear the stories going round about
+  you, a different one each time you ask, until they have no more. Ask an NPC not to gossip and it keeps quiet: the NPC
+  decides whether to tell, and the code never forces a story into a reply it declined.
+- **A town has an opinion of you.** The stories that reached a town over the last week of play shape how it sees you
+  (renowned, feared, or a figure of fun), and someone who has never met you may have heard of you.
+- **Everyone has a past.** Every townsperson has a home, a former life and one past event, fixed the first time it is
+  needed and never changed. Ask them where they are from.
+- **Some love to gossip.** Some townsfolk volunteer gossip readily, some never on a greeting, and a sceptic may add a line
+  of doubt after a story.
 - **The moons matter.** When both of Sosaria's moons are bright, the superstitious folk get jumpy and trust
   strangers less.
 - **They notice who you travel with.** Townsfolk and the innkeeper can see your companion and your pets, and now
@@ -93,6 +106,7 @@ and keeps long-term memory in SQLite.
 | Memory | `memory.py` (event ledger), `reflection.py` (beliefs), `cards.py` + `concepts.json` + `memory_rules.json` (structured memory), `named.py` |
 | Rumours and small talk | `rumours.py`, `rumour_speech.py`, `smalltalk.py` (+ their `.json` data) |
 | Relationships, mood, natures, moons | `dials.py` + `dials.json`, `mood.py` + `mood.json`, `nature.py` + `nature.json` |
+| Reputation and pasts | `reputation.py` (a town's view of a player), `backgrounds.py` + `backgrounds.json` (townsfolk pasts) |
 | Guards | `decency.py`, `shop_hint.py`, `variety.py` (repeat catcher) |
 | Personas | `personas/` (sample personalities) |
 | Knowledge | `lore.py`, `companion_secrets.py` (the code only; the secret text lives outside the repository) |
@@ -102,9 +116,9 @@ and keeps long-term memory in SQLite.
 
 - `Distribution/Data/Avallone/`: companion home spots, gift likes, extra spawners, turning-point rules
   (sample) and the word list used for name matching.
-- `Projects/UOContent.Tests/Tests/Avallone/`: about 190 C# tests across 27 files. The shard's content test
-  suite runs about 1,650 tests.
-- `brain/test_*.py`: about 400 Python tests across 27 files. Run them **one file at a time**. A
+- `Projects/UOContent.Tests/Tests/Avallone/`: about 340 C# tests across 39 files. The shard's content test
+  suite runs about 1,950 tests.
+- `brain/test_*.py`: about 820 Python tests across 43 files. Run them **one file at a time**. A
   single-process run of all of them has known cross-file leakage.
 
 ## Running it, in outline
@@ -155,8 +169,10 @@ and how the model was chosen:
 - *Ultima Online* is a trademark of Electronic Arts. This is an unofficial fan project. It contains no
   client data, and you need your own.
 - Built by the shard's owner working with AI coding assistants: Claude (Anthropic) writing most of the code
-  and documents, and Codex (OpenAI) independently reviewing the designs and changes, normally before they
-  went live (a few small changes went live on the owner's call before their review round).
+  and documents, and **Codex (OpenAI) doing a great deal of the heavy lifting as the independent reviewer**: it
+  reviews every design and change, writes its own test probes against the code, and has found and reproduced many of
+  the bugs fixed here, normally before a change goes live (a few small changes went live on the owner's call before
+  their review round). From November 2026 on, the public snapshots it has reviewed carry a `Reviewed-by: Codex (OpenAI)` line.
 - The conversation runs on open-weight models served locally through Ollama.
 - The decency filter's real word list is kept private. This copy has a short placeholder list
   (`brain/decency_terms.json`) so the code runs.

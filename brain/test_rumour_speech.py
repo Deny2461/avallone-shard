@@ -3,6 +3,7 @@
 import os
 import tempfile
 import unittest
+from unittest import mock
 
 import memory
 import rumour_speech as rs
@@ -38,6 +39,11 @@ class SpeechTests(unittest.TestCase):
         self.led.reconcile(1, 0, 0)
         self.r = rumours.Rumours(self.led, CFG)
         self.seq = 0
+        # Codex code R8 (test context): importing brain sets PAIR_SHARE from its config (0.35); these tests are written
+        # for the module default 0.0 (pairs only where a test turns them on), whatever ran in the process before
+        pair = mock.patch.object(rs, "PAIR_SHARE", 0.0)
+        pair.start()
+        self.addCleanup(pair.stop)
 
     def tearDown(self):
         self.led.db.close()
@@ -114,7 +120,34 @@ class SpeechTests(unittest.TestCase):
             self.assertNotIn(b, o.ids)                        # just heard: skipped outright
         self.assertIsNone(rs.select(self.r, H, "Britain", WREN, "news", exclude=[a, b], recent=[a, b], roster=ROSTER))
         o = self.offer(speaker=WREN, mode="about", about=ALT, recent=[b])
-        self.assertEqual(o.ids, [b])                          # asked for by name: still told
+        self.assertEqual(o.ids, [])                           # asked again: no retelling (the owner, chat, 2026-11-13) -
+        self.assertIn("already told them everything", o.block)   # was "asked for by name: still told" until then
+        self.assertNotIn("boots", o.block)
+
+    def test_repeat_asks_about_yourself_move_on_then_stop(self):
+        # the owner's dev session 2026-11-13: x3 gave the same fan-dancer story x3
+        import random as _r
+        a = self.deed("fished_boots", 60, char=WREN, subject="old boots", count=3, descriptor="a fisher")
+        b = self.deed("kill_notable", 120, char=WREN, who="Thandor", descriptor="a warrior")
+        first = self.offer(speaker=WREN, mode="about", about=WREN, rng=_r.Random(3), plain=True)
+        self.assertEqual(len(first.ids), 1)                   # first ask: one story, as before
+        told = first.ids[0]
+        hk = first.hk.get(told)
+        for heard in ([told], [hk] if hk else [told]):         # the shard sends bare ids or Step 2e keys
+            for i in range(10):
+                again = self.offer(speaker=WREN, mode="about", about=WREN, recent=heard, rng=_r.Random(i), plain=True)
+                self.assertEqual(again.ids, [b if told == a else a])   # the OTHER story, every time
+        both = [first.hk.get(told) or told]
+        other = self.offer(speaker=WREN, mode="about", about=WREN, recent=both, rng=_r.Random(1), plain=True)
+        both.append(other.hk.get(other.ids[0]) or other.ids[0])
+        last = self.offer(speaker=WREN, mode="about", about=WREN, recent=both, plain=True)
+        self.assertEqual((last.ids, last.said), ([], {}))      # all heard: no story, no exact sentence to force
+        self.assertIn("already told them everything you have heard of them", last.block)
+        self.assertNotIn("boots", last.block)
+        self.assertNotIn("dragon", last.block)
+        self.assertEqual(rs.wire_reply(last, [])["ids"], [])
+        fresh = self.offer(speaker=WREN, mode="about", about=WREN, recent=[], plain=True)
+        self.assertEqual(len(fresh.ids), 1)                   # outside the window: told again
 
     def test_about_an_ambiguous_name_asks_which_one(self):
         self.deed("fished_boots", 60, char=ALT, who="Brynn Handy", subject="old boots", count=3, descriptor="a fisher")
