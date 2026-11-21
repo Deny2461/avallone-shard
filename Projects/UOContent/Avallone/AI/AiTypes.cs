@@ -42,6 +42,11 @@ public sealed record RumourAsk(
 
 public sealed record RumourRosterEntry(string Id, string Name);
 
+// Stage 2 repair, decision 9 (the owner, chat, 2026-11-17): on an ordinary townsfolk turn, the speaking player's own name and
+// every player name the gossip roster knows, so the brain can keep an off-stage relative from sharing a player's name.
+// For the brain's name checks only - never put in a prompt. Null on every other request (left off the wire).
+public sealed record NameCheckAsk(string Player, string[] Roster);
+
 // Phase 5c: a named NPC's request - its key, the household's day, the speaker's name (summaries scrub it) and, for a
 // summary, the roster of real player names to scrub.
 // 5c-2 2a: Pt / Mpt = the played clock and the memory clock at this request (or, for a summary, at the end of the
@@ -180,6 +185,9 @@ public sealed record AiRequest(
 
     // Rumour step, Part A: set only on the one line that uses up a correction ticket; null = the request is unchanged.
     public CorrectionAsk Correction { get; init; }
+
+    // Stage 2 repair, decision 9: set only on an ordinary townsfolk turn (TownsfolkTalk.NameCheckFor); null = not sent.
+    public NameCheckAsk NameCheck { get; init; }
 
     // One conversation lease per NPC + subject: a second request while one is pending is refused.
     public string LeaseKey => $"{NpcId:N}:{SubjectId:N}";

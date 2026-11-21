@@ -51,7 +51,11 @@ public sealed class SidecarAiClient : IAiNpcClient
             request.Party,
             request.Exchange,
             request.Falling,
-            request.Correction
+            request.Correction,
+            // Townsfolk step, Stage 1 (design 4.3): the hash of the shard's current roster on EVERY prompt request, all
+            // modes - built here because this is the one place a request body is made. null = switch off, left out.
+            Server.Avallone.Townsfolk.TownRoster.StampForRequest(),
+            request.NameCheck // Stage 2 repair, decision 9: left out unless set
         );
 
     public async Task<AiReply> SendAsync(AiRequest request, TimeSpan budget, CancellationToken token)
@@ -212,7 +216,11 @@ public sealed class SidecarAiClient : IAiNpcClient
         string Falling,
         // Rumour step, Part A: left out entirely unless this line uses up a correction ticket
         [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-        CorrectionAsk Correction = null
+        CorrectionAsk Correction = null,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        string RosterStamp = null,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        NameCheckAsk NameCheck = null
     );
 
     private sealed record SidecarResponse(

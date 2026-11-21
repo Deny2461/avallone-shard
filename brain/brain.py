@@ -50,6 +50,10 @@ import acquaint  # noqa: E402  (Stage A3 2026-11-10: who an NPC has traded lines
 import topics  # noqa: E402  (Stage A3 step 2: which broad subjects came up - keywords, no model call)
 import weather  # noqa: E402  (one weather per day for every NPC - the owner's step 2 play test)
 import nature  # noqa: E402  (Step B 2026-11-08: a nature (personality) per ordinary NPC)
+import townroster  # noqa: E402  (townsfolk step, Stage 1: the roster the shard sends - stored, nothing shown)
+import people_store  # noqa: E402  (townsfolk step, Stage 2: ages, family, the who-you-are block - all off by default)
+import town_knowledge  # noqa: E402  (townsfolk step, Stage 2: where things are in town - off by default)
+import world  # noqa: E402  (2026-11-15: the world table - town, kingdom, world; the owner after the Stage 1 play test)
 import backgrounds  # noqa: E402  (Step 2e: home, former life, one past event per ordinary NPC - stored on first need)
 import party  # noqa: E402  (Stage A1 2026-11-09: who travels with the player)
 import exchange  # noqa: E402  (Stage A2 2026-11-09: a spoken exchange between two AI characters, public only)
@@ -402,6 +406,11 @@ def apply_vars(persona, raw_vars):
         if PERSONA_KEY.match(str(k)) and VAR_VALUE.match(val):
             v[str(k)] = val
     v["trade_line"] = TRADE_LINES.get(v["trade"], "")
+    # The world table (the owner, chat, 2026-11-15): which place name is the town, which the kingdom, which the world. With the
+    # table off these two give back the old sentence exactly.
+    # Both from ONE checked snapshot of the table, and never an error: a damaged table gives the old sentence whole
+    # (Codex talk-fixes R1, A2).
+    v["realm_tail"], v["place_line"] = world.values(v["town"])
     persona = dict(persona)
     persona["text"] = persona["text"].format_map(v)
     persona["name"] = v["name"] or persona["name"]
@@ -552,6 +561,7 @@ def open_ledger():
 LEDGER = None
 RUMOURS = None  # Phase 5a; needs the ledger
 MADEUP = None   # rumour step C2; needs RUMOURS. Used only while the madeup_flow setting is on.
+ROSTER = None   # townsfolk step, Stage 1; made in main() only when the "roster" setting is on
 LORE_TOLD = {}  # C2: player id -> time.monotonic() when the lore's rumour pages were last their "what news" answer
 
 
@@ -647,9 +657,164 @@ def take_tease(npc, subject, rid):
     return t is not None and time.monotonic() - t <= TEASE_TTL
 
 
+# Repair B3 (Codex Method R1 F13): what THIS brain process has seen of the current shard session. Permanent family
+# records are written only after (1) a successful memory reconciliation for a session, then (2) the shard confirming,
+# after it, that the roster held here is its current one (sent, probed, or stamped on a turn). A roster stored from an
+# earlier run is not that confirmation, so nothing is built at start-up.
+PEOPLE_SESSION = {"epoch": None, "roster": None}
+# Codex Code R1 F4: one build worker at a time, and a pass that did not finish its work is remembered so that a later
+# confirmation of the SAME roster tries again - no sooner than PEOPLE_RETRY_S after the failure, so a talk turn can
+# never start a stream of passes. `again`: a pass was asked for while one ran; the worker makes it when it ends.
+# Codex Code R2 F1: `key` is the (roster hash, session) the running pass is working on. A confirmation of that same
+# work while it runs is already covered and queues nothing - otherwise a retry that fails again would be followed at
+# once by a queued pass, past the wait. Only different work (another roster, or a new session) is queued.
+PEOPLE_BUILD = {"running": False, "again": False, "failed": None, "retry_at": 0.0, "key": None}
+PEOPLE_BUILD_LOCK = threading.Lock()
+PEOPLE_RETRY_S = 60
+
+
+def people_session_reconciled(epoch, ok):
+    PEOPLE_SESSION.update(epoch=int(epoch) if ok else None, roster=None)
+
+
+def people_roster_confirmed(hash_):
+    """The shard has just shown that `hash_` is its current roster. The first confirmation of the held roster after a
+    reconciliation starts the build pass; later ones change nothing (so a talk turn never starts a thread)."""
+    held = ROSTER.held() if ROSTER is not None else None
+    if PEOPLE_SESSION["epoch"] is None or held is None or hash_ != held.hash:
+        return
+    if PEOPLE_SESSION["roster"] == hash_:
+        with PEOPLE_BUILD_LOCK:               # F4: only a pass that FAILED for this roster is made again, and not at once
+            due = PEOPLE_BUILD["failed"] == hash_ and time.monotonic() >= PEOPLE_BUILD["retry_at"]
+        if not due:
+            return
+    PEOPLE_SESSION["roster"] = hash_
+    people_build_soon()
+
+
+def people_build_soon():
+    """Stage 2 (design 6.5): build every unbuilt town of the held roster on a thread of its own - never inside
+    a talk request. Does nothing unless the "people" setting is on - and, repair B3, unless this process has seen the
+    session reconciled and the held roster confirmed for it."""
+    if not CFG.get("people") or LEDGER is None or ROSTER is None or ROSTER.held() is None:
+        return
+    held, epoch = ROSTER.held(), PEOPLE_SESSION["epoch"]
+    if epoch is None or PEOPLE_SESSION["roster"] != held.hash or not LEDGER.reconciled(epoch):
+        log(event="people", op="build_all", outcome="waiting", epoch=epoch, roster_confirmed=PEOPLE_SESSION["roster"] == held.hash)
+        return
+
+    with PEOPLE_BUILD_LOCK:
+        if PEOPLE_BUILD["running"]:
+            if PEOPLE_BUILD["key"] != (held.hash, epoch):     # R2 F1: the running pass already covers the same work
+                PEOPLE_BUILD["again"] = True
+            return
+        PEOPLE_BUILD.update(running=True, again=False, key=(held.hash, epoch))
+
+    def run(h, ep):
+        while True:
+            failed = True
+            try:
+                out = people_store.build_all(LEDGER, h, log=log, epoch=ep)
+                # Codex GoLive R1 F1: a completion names the work it finished - session and roster (12 of the hash)
+                log(event="people", op="build_all", epoch=ep, roster=h.hash[:12], **out)
+                failed = any(k in people_store.RETRY for k in out)
+            except Exception as e:
+                log(event="people", op="build_all", outcome="error", epoch=ep, roster=h.hash[:12], error=f"{type(e).__name__}: {e}")
+            nxt = None
+            with PEOPLE_BUILD_LOCK:
+                if failed:
+                    PEOPLE_BUILD.update(failed=h.hash, retry_at=time.monotonic() + PEOPLE_RETRY_S)
+                elif PEOPLE_BUILD["failed"] == h.hash:
+                    PEOPLE_BUILD["failed"] = None
+                if PEOPLE_BUILD["again"]:     # asked for while this pass ran: once more, with what is held and confirmed now
+                    PEOPLE_BUILD["again"] = False
+                    h2, ep2 = (ROSTER.held() if ROSTER is not None else None), PEOPLE_SESSION["epoch"]
+                    if (h2 is not None and ep2 is not None and PEOPLE_SESSION["roster"] == h2.hash
+                            and (h2.hash, ep2) != (h.hash, ep)):   # R2 F1: never the work just done (or just failed) again
+                        nxt = (h2, ep2)       # each town still checks the reconciliation itself, in its own transaction
+                if nxt is None:
+                    PEOPLE_BUILD.update(running=False, key=None)
+                    return
+                PEOPLE_BUILD["key"] = (h2.hash, ep2)
+            h, ep = nxt
+    threading.Thread(target=run, args=(held, epoch), daemon=True).start()
+
+
+def request_names(req, extra=()):
+    """Repair A6 (Codex Method R1 F15): every person's name that actually arrives on this request - the gossip roster,
+    the travelling party (companions and its roster of player names), a named NPC's speaker and roster, a correction's
+    roster, and on an exchange step its speaker, addressee and roster (`extra`). An off-stage relative must not share a
+    word of any of them on this turn. Decision 9 (the owner, chat, 2026-11-17): an ordinary townsfolk request now carries
+    `name_check` - the speaking player's own name and the player roster - read HERE ONLY, never put in a prompt."""
+    out = [str(req.get(k) or "") for k in ("player_name", "subject_name")]
+    nc = req.get("name_check") if isinstance(req.get("name_check"), dict) else {}
+
+    def entries(xs):
+        return [str((p.get("name") if isinstance(p, dict) else p) or "") for p in (xs or []) if isinstance(p, (dict, str))]
+    rum, party, named, corr = (req.get(k) or {} for k in ("rumours", "party", "named", "correction"))
+    out += entries(rum.get("roster")) + entries(party.get("companions")) + entries(party.get("roster"))
+    out += [str(named.get("speaker") or "")] + entries(named.get("roster")) + entries(corr.get("roster"))
+    out += [str(nc.get("player") or "")] + entries(nc.get("roster"))
+    out += [str(x or "") for x in extra]
+    return [x for x in out if x.strip()]
+
+
+def people_block(req, npc, pv, conversation, turn, extra_names=()):
+    """Stage 2 (design 8.1, 8.2): (the who-you-are block for this turn or "", fields for the log).
+    Settings: "people" on AND "always_know" = "A" or "B"; anything else is today's behaviour. Names and places of real
+    relatives come only from the roster usable for THIS turn (the request's stamp must equal the held hash)."""
+    arr = str(CFG.get("always_know") or "off")
+    if not CFG.get("people") or arr not in ("A", "B") or LEDGER is None:
+        return "", {}
+    v = people_store.view(LEDGER, npc)
+    if v is None:
+        return "", {"people": arr, "people_record": False}
+    held = ROSTER.usable(req.get("roster_stamp")) if ROSTER is not None else None
+    avoid = request_names(req, extra_names)
+    if held is not None:
+        at = held.where(npc)
+        if at:
+            avoid += [p["name"] for p in held.people(at[0], at[1]) if p["id"] != str(npc).lower()]
+    hb = arr == "B" and people_store.hold_back(npc, conversation, turn, CFG.get("always_know_hold_share", 0.5))
+    nat_now = nature.of(npc)
+    drops = people_store.nature_drops(v, held.where if held is not None else None, str(pv.get("town") or ""), pv.get("role"),
+                                      nat_now)
+    snap = {} if CFG.get("measure_trace") else None                         # repair C1/D3: dev measurement only
+    text = people_store.block(v, str(pv.get("town") or ""), where=held.where if held is not None else None,
+                              avoid_names=[a for a in avoid if a], role_now=pv.get("role"), arrangement=arr, held_back=hb,
+                              nature_now=nat_now, snap=snap, works=bool(CFG.get("relative_works")),
+                              kin_here=bool(CFG.get("kin_in_town")))
+    places = town_knowledge.lines(held, npc) if text and CFG.get("town_knowledge") and held is not None else ""
+    if places:
+        text += "\n" + places
+    info = {"people": arr, "people_held_back": hb, "people_chars": len(text), "people_roster": held is not None,
+            "town_knowledge": bool(places), "nature_drop": drops}
+    if snap is not None:     # popped by the caller before logging; never written to the brain log
+        snap["places"] = [list(x) for x in town_knowledge.nearest(held, npc)] if places else []
+        info["_snapshot"] = snap
+    return text, info
+
+
+def note_roster_stamp(req, path):
+    """Townsfolk step, Stage 1 (design 4.5). Nothing reads the roster for a prompt yet. Each prompt request's stamp is
+    checked against the held roster and the answer logged, so a play test shows how often a turn's stamp matches -
+    which is what Stage 2 will depend on. A request without the field (older shard, switch off) logs nothing."""
+    if ROSTER is None or not isinstance(req, dict) or "roster_stamp" not in req:
+        return
+    stamp = req.get("roster_stamp")
+    match = ROSTER.usable(stamp) is not None
+    log(event="roster", op="turn", path=path, match=match, stamp=stamp[:12] if isinstance(stamp, str) else None)
+    if match:
+        people_roster_confirmed(stamp)      # repair B3
+
+
 def log(**fields):
     fields["ts"] = datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%S.%fZ")[:-4] + "Z"
     print(json.dumps(fields, ensure_ascii=False), flush=True)
+
+
+# A damaged world.json switches the world table off; say so once per damaged version of the file (Codex talk-fixes R1, A2).
+world.report = lambda problem: log(event="world_table", outcome="off", error=problem)
 
 
 def in_quiet_window(now=None):
@@ -719,6 +884,8 @@ def ollama_chat(persona, utterance, timeout_s, history=(), nudge=None, knowledge
     }
     if CFG.get("think") is not None:
         body["think"] = CFG["think"]
+    if stats is not None:
+        stats["prompt_sha"] = prompt_sha(body)                              # repair C1: the attempt that is kept
     req = urllib.request.Request(
         CFG["ollama_url"].rstrip("/") + "/api/chat",
         data=json.dumps(body).encode(),
@@ -938,6 +1105,12 @@ def ollama_json(system, user, schema, timeout_s, max_tokens, cancellable=False, 
         return None
 
 
+def prompt_sha(body):
+    """Repair C1 (Codex Method R1 F6): SHA-256 of the WHOLE model request - model, settings, format and every message -
+    so a saved reply can be tied to exactly what produced it. Nothing secret is in a model request."""
+    return hashlib.sha256(json.dumps(body, sort_keys=True, ensure_ascii=False).encode()).hexdigest()
+
+
 def ollama_line(system, user, timeout_s, max_tokens):
     """Stage A2: ONE cancellable chat call for an exchange step - a system message and one user message, nothing else.
     Returns (line, stats); the line is "" when the model had nothing to add. Never retried."""
@@ -962,6 +1135,7 @@ def ollama_line(system, user, timeout_s, max_tokens):
         raise GarbledReply(f"reply is a JSON {type(parsed).__name__}, not an object")
     ns = 1_000_000
     return clean(parsed.get("say", ""), 240), {
+        "prompt_sha": prompt_sha(body),                                     # repair C1
         "prompt_tokens": data.get("prompt_eval_count"), "reply_tokens": data.get("eval_count"),
         "load_ms": (data.get("load_duration") or 0) // ns, "gen_ms": (data.get("eval_duration") or 0) // ns}
 
@@ -1100,8 +1274,9 @@ class Handler(BaseHTTPRequestHandler):
 
     MAX_BODY = 64 * 1024
 
-    def read_body(self):
+    def read_body(self, max_body=None):
         # .NET's PostAsJsonAsync sends chunked bodies with no Content-Length; http.server does not decode them.
+        limit = max_body or self.MAX_BODY
         if self.headers.get("Transfer-Encoding", "").lower() == "chunked":
             data = b""
             while True:
@@ -1112,12 +1287,33 @@ class Handler(BaseHTTPRequestHandler):
                     return data
                 data += self.rfile.read(size)
                 self.rfile.readline(1024)  # CRLF after each chunk
-                if len(data) > self.MAX_BODY:
+                if len(data) > limit:
                     raise ValueError("body too large")
         length = int(self.headers.get("Content-Length", "0"))
-        if length > self.MAX_BODY:
+        if length > limit:
             raise ValueError("body too large")
         return self.rfile.read(length)
+
+    def handle_roster(self):
+        """Townsfolk step, Stage 1 (design 4): take the shard's roster, or answer a probe with what is held.
+        Stored only - nothing in any prompt reads it yet."""
+        if ROSTER is None:
+            self.send_json(404, {"ok": False, "error": "not found"})   # as an older brain answers: the shard asks later
+            return
+        try:
+            req = json.loads(self.read_body(2 * townroster.MAX_CONTENT + 64 * 1024) or b"{}")
+        except ValueError as e:
+            self.send_json(400, {"ok": False, "error": str(e), "roster_held": ROSTER.held_hash()})
+            return
+        if isinstance(req, dict) and req.get("probe"):
+            self.send_json(200, {"ok": True, "roster_held": ROSTER.held_hash(), "error": None})
+            if isinstance(req.get("hash"), str) and req["hash"] == ROSTER.held_hash():
+                people_roster_confirmed(req["hash"])     # repair B3: the shard's current roster is the held one
+            return
+        ok, err = ROSTER.accept(req)
+        self.send_json(200, {"ok": ok, "error": err, "roster_held": ROSTER.held_hash()})
+        if ok:
+            people_roster_confirmed(ROSTER.held_hash())  # Stage 2 (off unless "people" is set); repair B3
 
     def do_GET(self):
         if self.path == "/health":
@@ -1130,6 +1326,9 @@ class Handler(BaseHTTPRequestHandler):
                 "ollama_reachable": version is not None,
                 "quiet_window": in_quiet_window(),
                 "lore": LORE.stats(),
+                # townsfolk step, Stage 1 (design 4.5a): the hash of the roster this brain holds, or None
+                "roster_held": ROSTER.held_hash() if ROSTER is not None else None,
+                "world_table": world.state(),   # "on", "off", or "damaged: <why>" (then the old sentence is in use)
             })
         elif self.path == "/v1/reflection/status":
             try:
@@ -1158,6 +1357,9 @@ class Handler(BaseHTTPRequestHandler):
             return
         if self.path == "/v1/lore/query":
             self.handle_lore_query()
+            return
+        if self.path == "/v1/roster":
+            self.handle_roster()
             return
         if self.path == "/v1/secrets/gates":
             self.handle_secret_gates()
@@ -1190,6 +1392,7 @@ class Handler(BaseHTTPRequestHandler):
         start = time.monotonic()
         try:
             req = json.loads(self.read_body())
+            note_roster_stamp(req, self.path)   # townsfolk step, Stage 1: logged only
         except Exception as e:
             self.send_json(400, {"ok": False, "error": f"bad request: {e}"})
             return
@@ -1208,6 +1411,8 @@ class Handler(BaseHTTPRequestHandler):
         situation = str(req.get("situation") or "")[:1500]
         actions = clean_actions(req.get("actions"))
         nat_habit = None   # C4: None = no nature on this reply; else whether the habit sentence was in the prompt
+        pp_text, pp_info = "", {}   # Stage 2: the who-you-are block and its log fields ("" = today's behaviour)
+        pp_snap, tr_nature, tr_bg = None, "", ""   # repair C1/D3: what the measurement trace reports (measure_trace only)
         try:
             if req.get("persona_key"):
                 persona = load_persona(req["persona_key"])
@@ -1216,15 +1421,29 @@ class Handler(BaseHTTPRequestHandler):
                     # Step B (the owner, chat, 2026-11-08): the ordinary NPC's own nature
                     # Rumour step C4: a flourish habit is in the prompt only some turns, never two running
                     nat_habit = nature.habit_in_prompt(npc, req.get("subject_id"), rid)
-                    nat_block = nature.prompt_block(nature.of(npc), nat_habit)
+                    try:    # Stage 2 (design 8.1): a problem costs the block, never the reply
+                        pp_text, pp_info = people_block(req, npc, req.get("persona_vars") or {}, req.get("subject_id"), rid)
+                        pp_snap = pp_info.pop("_snapshot", None)
+                    except Exception as e:
+                        pp_text, pp_info = "", {}
+                        log(event="people", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
+                    drops = pp_info.get("nature_drop") or []      # repair A4: what of the nature is untrue this turn
+                    if "habit" in drops:
+                        nat_habit = False
+                    nat_block = nature.prompt_block(people_store.for_turn(nature.of(npc), drops), nat_habit)
+                    tr_nature = nat_block or ""
                     if nat_block:
                         persona = dict(persona, text=persona["text"] + "\n" + nat_block)
+                    if pp_text:
+                        persona = dict(persona, text=persona["text"] + "\n" + pp_text)
                     # Step 2e (design §8.5): the NPC's own past - assigned once, stored, always in when asked about;
                     # otherwise only in the one shared flourish slot. A problem costs the line, never the reply.
                     try:
                         bg_line = ""
                         pv = req.get("persona_vars") or {}
-                        if LEDGER is not None and (nature.cfg().get("backgrounds") or {}).get("enabled") and pv.get("town"):
+                        if pp_text:
+                            pass    # the block already holds the past, on every turn (design 8.1; the ASKED detector retires)
+                        elif LEDGER is not None and (nature.cfg().get("backgrounds") or {}).get("enabled") and pv.get("town"):
                             # Codex code R6: on a gossip follow-up turn only a question plainly about the NPC itself
                             # counts ("what happened before that?" is about the story, not about them).
                             following = str((req.get("rumours") or {}).get("mode") or "") == "follow"
@@ -1237,6 +1456,7 @@ class Handler(BaseHTTPRequestHandler):
                                 bg = backgrounds.assign(LEDGER, npc, str(pv.get("town")), str(pv.get("role") or ""),
                                                         str(pv.get("trade") or ""), log=log)
                                 bg_line = backgrounds.prompt_line(backgrounds.text(bg, str(pv.get("town"))), asked_now)
+                        tr_bg = bg_line
                         if bg_line:
                             persona = dict(persona, text=persona["text"] + "\n" + bg_line)
                     except Exception as e:
@@ -1764,6 +1984,7 @@ class Handler(BaseHTTPRequestHandler):
             # if the new one is clean and not a repeat; never on a reveal, a decency line or a gossip turn (the gossip
             # binding stays as it was). Runs before the mood checks, so a retried reply is checked for excuses too.
             variety_log = None
+            kept_sha = stats.get("prompt_sha")   # repair C1: the model request whose words are kept (follows the retries)
             if not reveal_id and offer is None and not (binding or "").startswith("decency") and say:
                 rep = variety.check(str(npc), str(subject), say)
                 if rep:
@@ -1771,12 +1992,14 @@ class Handler(BaseHTTPRequestHandler):
                     left = timeout_s - (time.monotonic() - start)
                     if left >= 1.5:
                         try:
+                            st3 = {}
                             s3, a3 = ollama_chat(persona, model_utt, left, history, nudge=variety.nudge(rep),
                                                  knowledge=knowledge, situation=situation, actions=actions,
-                                                 memories=memories, stats={}, **gen)
+                                                 memories=memories, stats=st3, **gen)
                             s3, w3 = settle(s3)
                             if s3 and not w3 and not variety.check(str(npc), str(subject), s3):
                                 say, action, variety_log["fixed"] = s3, a3, "retry"
+                                kept_sha = st3.get("prompt_sha")
                             else:
                                 variety_log["fixed"] = "kept"
                         except Exception as e:
@@ -1810,10 +2033,12 @@ class Handler(BaseHTTPRequestHandler):
                             mood_log["retry_error"] = type(e).__name__
                     if retried is not None and not mood.excuse(retried):
                         say, mood_log["fixed"] = retried, "retry"
+                        kept_sha = st2.get("prompt_sha")
                         story_choice = st2.get("story", "") if story_on else ""
                     else:
                         cut = mood.strip_excuses(retried if retried is not None else say)
                         say, mood_log["fixed"] = (cut or MOOD_FALLBACK), "cut" if cut else "fallback"
+                        kept_sha = None if not cut else st2.get("prompt_sha") if retried is not None else kept_sha
                         # Codex code R12-1: the choice belongs to the reply the words came from - the retry's when what
                         # is kept is cut from the retry (missing = keep); none at all for the code-written fallback
                         if story_on:
@@ -1916,7 +2141,7 @@ class Handler(BaseHTTPRequestHandler):
                        "filtered_first_sha": filtered and companion_secrets.fingerprint(filtered)}
                       if reveal_id else {"say": say, "filtered_first": filtered})
             log(event="respond", request_id=rid, npc=npc, outcome="ok", ms=ms, model=CFG["model"],
-                utterance=utterance, **spoken, lore=used,
+                utterance=utterance, **spoken, lore=used, **pp_info,
                 **({"memory": mem_used, "history_restored": restored} if mem_used or restored else {}), **stats,
                 attempts=2 if first_try is not None else 1, **({"first_attempt": first_try} if first_try else {}),
                 **({"suffix_disposition": disposition} if disposition else {}),
@@ -1961,6 +2186,14 @@ class Handler(BaseHTTPRequestHandler):
                     # ask for the companion's one-line reaction instead - with this number and nothing of the reply.
                     # The shard still checks that the spoken line really names her.
                     out["reaction"] = {"sort": react_sort}
+            if CFG.get("measure_trace"):   # repair C1/D3: dev measurement only - what this reply was built from
+                out["trace"] = {"prompt_sha": kept_sha, "attempts": 2 if first_try is not None else 1,
+                                "people": pp_info, "facts": pp_text, "snapshot": pp_snap, "nature": tr_nature,
+                                "background_line": tr_bg, "habit_in_prompt": nat_habit,
+                                # the final words are not (only) the model's: the scorer must know
+                                "by_code": {"decency_line": decency_line, "variety": variety_log, "scrubbed": bool(gen_scrubbed),
+                                            "mood": (mood_log or {}).get("fixed"), "clause": bool((mood_log or {}).get("clause")),
+                                            "shop_hint": hint_note, "plain_sentence": bool(plain_fixed)}}
             self.send_json(200, out)
         except Exception as e:
             ms = int((time.monotonic() - start) * 1000)
@@ -1979,6 +2212,7 @@ class Handler(BaseHTTPRequestHandler):
         rid = npc = None
         try:
             req = json.loads(self.read_body())
+            note_roster_stamp(req, self.path)   # townsfolk step, Stage 1: logged only
             rid, npc = req.get("request_id"), req.get("npc_id")
             options = [a for a in clean_actions(req.get("actions")) if a != "none"]
             if not options:
@@ -2024,6 +2258,7 @@ class Handler(BaseHTTPRequestHandler):
         began = False
         try:
             req = json.loads(self.read_body())
+            note_roster_stamp(req, self.path)   # townsfolk step, Stage 1: logged only
             rid, npc = req.get("request_id"), req.get("npc_id")
             ask = req.get("named") if isinstance(req.get("named"), dict) else {}
             if in_quiet_window():
@@ -2099,6 +2334,7 @@ class Handler(BaseHTTPRequestHandler):
 
         try:
             req = json.loads(self.read_body())
+            note_roster_stamp(req, self.path)   # townsfolk step, Stage 1: logged only
             rid, npc = req.get("request_id"), req.get("npc_id")
             if in_quiet_window():
                 done("quiet_window")
@@ -2122,12 +2358,24 @@ class Handler(BaseHTTPRequestHandler):
             tag = {"exchange": ask["id"], "step": ask["step"], "speaker": ask["speaker"]["kind"],
                    **({"react": ask["react"]} if react else {})}
             persona = load_persona(req.get("persona_key"))
+            ex_text, ex_info, ex_snap, ex_nature = "", {}, None, ""      # repair C1/D3: the trace's defaults
             if req.get("persona_vars"):
                 persona = apply_vars(persona, req["persona_vars"])
-                nat_block = nature.prompt_block(nature.of(npc), nature.habit_in_prompt(
-                    npc, "exchange:" + str(ask["id"]), f"{ask['id']}:{ask['step']}"))   # rumour step C4
+                ex_habit = nature.habit_in_prompt(npc, "exchange:" + str(ask["id"]), f"{ask['id']}:{ask['step']}")   # rumour step C4
+                try:    # Stage 2: the same block on the NPC-to-companion path (design 8.1 "one builder")
+                    ex_text, ex_info = people_block(req, npc, req["persona_vars"], "exchange:" + str(ask["id"]), f"{ask['id']}:{ask['step']}",
+                                                    extra_names=[ask["speaker"]["name"], ask["addressee"]["name"]] + list(ask.get("roster") or []))
+                    ex_snap = ex_info.pop("_snapshot", None)
+                except Exception as e:
+                    ex_text, ex_info = "", {}
+                    log(event="people", exchange=ask["id"], npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
+                ex_drops = ex_info.get("nature_drop") or []   # repair A4
+                nat_block = nature.prompt_block(people_store.for_turn(nature.of(npc), ex_drops), ex_habit and "habit" not in ex_drops)
+                ex_nature = nat_block or ""
                 if nat_block:
                     persona = dict(persona, text=persona["text"] + "\n" + nat_block)
+                if ex_text:
+                    persona = dict(persona, text=persona["text"] + "\n" + ex_text)
             if REFLECTING or not begin_background("exchange", ask["id"]):
                 gone = ask["id"] in CANCELLED_EXCHANGES
                 done("cancelled" if gone else "busy")
@@ -2184,6 +2432,9 @@ class Handler(BaseHTTPRequestHandler):
                 answer({"ok": False, "error": f"refused ({why})"})
                 return
             out = {"ok": True, "say": say, "action": "none", "model": CFG["model"], "kind": "exchange"}
+            if CFG.get("measure_trace"):   # repair C1/D3: dev measurement only
+                out["trace"] = {"prompt_sha": stats.get("prompt_sha"), "people": ex_info, "facts": ex_text, "snapshot": ex_snap,
+                                "nature": ex_nature}
             # Step 2: a CANDIDATE - the subjects of the exchange lines already said plus this one, never the opening
             # line (transcript[0] is the NPC's reply to the player). The shard keeps it only if this line is really
             # spoken (Codex S2-D2). None = no classification offered: the field is left out. Never raises.
@@ -2280,6 +2531,7 @@ class Handler(BaseHTTPRequestHandler):
                                                            req.get("outbox_min_seq"))
                 log(event="memory", op="reconcile", outcome=verdict, rolled_back=rolled, reason=reason,
                     new_epoch=req["new_epoch"], saved_epoch=req["saved_epoch"], saved_seq=req["saved_seq"])
+                people_session_reconciled(req["new_epoch"], verdict in ("ok", "fresh"))   # repair B3
                 self.send_json(200, {"ok": True, "verdict": verdict, "rolled_back": rolled, "reason": reason,
                                      "talked_with_topics": 1, "rumour_corrected": 1, "rumour_heard": 1})
             elif op == "status":
@@ -2411,17 +2663,29 @@ def make_server(host, port):
 
 
 def main():
-    global LEDGER, RUMOURS, MADEUP
+    global LEDGER, RUMOURS, MADEUP, ROSTER
+    if "AVALLONE_BRAIN_CONFIG" in os.environ and not os.path.isfile(CONFIG_PATH):
+        # Codex Code R1 F2: a config file NAMED for this run that is not there must never be answered with the built-in
+        # defaults - those are the live brain's port and memory database. (The live service names no file; it is unchanged.)
+        log(event="start", outcome="refused", config=CONFIG_PATH,
+            reason="the config file named in AVALLONE_BRAIN_CONFIG does not exist - not starting on built-in defaults")
+        sys.exit(f"refusing to start: config file {CONFIG_PATH!r} (AVALLONE_BRAIN_CONFIG) does not exist")
     if not loopback_only(CFG["listen_host"]):
         log(event="start", outcome="refused", listen_host=str(CFG["listen_host"]),
             reason="listen_host must be a loopback address - the brain has no authentication")
         sys.exit(f'refusing to start: listen_host {CFG["listen_host"]!r} is not loopback (127.0.0.1, ::1 or localhost)')
     LEDGER = open_ledger()
+    if CFG.get("roster"):
+        ROSTER = townroster.Roster(LEDGER, log=log)   # with no ledger it holds in memory only
     if LEDGER is not None:
         try:
             RUMOURS = rumours.Rumours(LEDGER, CFG["rumours_config"])
             RUMOURS.show_corrections = bool(CFG.get("rumour_corrections_shown", True))
             backgrounds.ensure_table(LEDGER)   # Step 2e: stored NPC pasts (additive table; an older brain ignores it)
+            if CFG.get("people"):              # Stage 2: off by default; additive tables
+                people_store.ensure_tables(LEDGER)
+                nature.set_pins(lambda npc: people_store.pins(LEDGER, npc))   # the stored nature is the one that talks (6.4)
+                # repair B3: no build at start-up - a stored roster is not proof of the current shard session
             if CFG.get("rumour_heard_read", True) and not plain_telling():
                 # Step 2e (Codex code R1-1): a real deed counts as DELIVERED only when its exact sentence was said, and
                 # that sentence exists only with plain telling. Without it, only made-up stories are recorded - said here.

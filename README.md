@@ -59,6 +59,15 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
   (renowned, feared, or a figure of fun), and someone who has never met you may have heard of you.
 - **Everyone has a past.** Every townsperson has a home, a former life and one past event, fixed the first time it is
   needed and never changed. Ask them where they are from.
+- **Townsfolk have lives.** Everyone who lives and works in a town has an age, years in the town and at the trade, a
+  family and a household, worked out once by code and stored. Ask a baker about her family and you get the same answer
+  next week; if her sister keeps the stable across town, the sister says so too.
+- **They know their town.** Ask where the bank, the healer or the smith is, and a townsperson gives a compass
+  direction and a rough distance to the nearest one in their own town, worked out from where people actually stand.
+- **The place keeps the person.** A townsperson who is killed and respawns, or comes back after the world is restored
+  from an older save, is the same person: same name, same looks, same memory of you.
+- **They know where they are.** Town, kingdom and world are kept apart, so someone asked where they are from names
+  their town and not the kingdom.
 - **Some love to gossip.** Some townsfolk volunteer gossip readily, some never on a greeting, and a sceptic may add a line
   of doubt after a story.
 - **The moons matter.** When both of Sosaria's moons are bright, the superstitious folk get jumpy and trust
@@ -91,6 +100,7 @@ hook was needed.
 | `Companions/` | `BaseCompanion` and its gear, trust, trailing AI, home spots and gear custody box; one concrete companion |
 | `Mobiles/` | Mirabel, the first talking NPC |
 | `Named/` | The shared layer for named NPCs, and a GM view that explains every number |
+| `Townsfolk/` | The **identity lock**: a seat for every resident townsperson, so name, looks and AI identity survive a respawn or a restore (a register kept outside the saves, a reconcile at every start, quarantine instead of guessing, the `[Seats` operator commands); the **town roster** the shard sends to the brain; a read-only census |
 | `Rumours/` | The **deed hooks** that turn public events into news, the played-time clock, and how rumours are spoken with names bound safely |
 | `Wanderers/` | The self-directed sellsword: travel, hunt, sell, bank, rest, with route planning |
 | *(top level)* | Shard rule switches (`AvalloneRules`), extra spawns, champion and serpent-pillar tweaks |
@@ -107,6 +117,7 @@ and keeps long-term memory in SQLite.
 | Rumours and small talk | `rumours.py`, `rumour_speech.py`, `smalltalk.py` (+ their `.json` data) |
 | Relationships, mood, natures, moons | `dials.py` + `dials.json`, `mood.py` + `mood.json`, `nature.py` + `nature.json` |
 | Reputation and pasts | `reputation.py` (a town's view of a player), `backgrounds.py` + `backgrounds.json` (townsfolk pasts) |
+| Townsfolk lives | `people.py` (ages, years, families: pure functions with their own audit), `people_store.py` (storage, and the code-written lines about an NPC's own life), `people_rules.json`, `people_tags.json`, `people_lists.json`, `people_names.json`, `townroster.py` (the town list the shard sends), `town_knowledge.py` (the nearest places, by direction), `world.py` + `world.json` (town, kingdom, world) |
 | Guards | `decency.py`, `shop_hint.py`, `variety.py` (repeat catcher) |
 | Personas | `personas/` (sample personalities) |
 | Knowledge | `lore.py`, `companion_secrets.py` (the code only; the secret text lives outside the repository) |
@@ -116,9 +127,9 @@ and keeps long-term memory in SQLite.
 
 - `Distribution/Data/Avallone/`: companion home spots, gift likes, extra spawners, turning-point rules
   (sample) and the word list used for name matching.
-- `Projects/UOContent.Tests/Tests/Avallone/`: about 340 C# tests across 39 files. The shard's content test
-  suite runs about 1,950 tests.
-- `brain/test_*.py`: about 820 Python tests across 43 files. Run them **one file at a time**. A
+- `Projects/UOContent.Tests/Tests/Avallone/`: about 425 C# tests across 44 files. The shard's content test
+  suite runs about 2,070 tests.
+- `brain/test_*.py`: about 1,000 Python tests across 50 files. Run them **one file at a time**. A
   single-process run of all of them has known cross-file leakage.
 
 ## Running it, in outline
@@ -155,6 +166,8 @@ and how the model was chosen:
 | **Belief** | A short conclusion an NPC draws about a player from facts, written during quiet time ("reflection"). |
 | **Turning point** | A rule-based moment that permanently nudges one of a companion's personality traits. |
 | **Dials** | Per-NPC, per-character relationship numbers: familiarity, warmth, trust, respect. |
+| **Seat** | A resident townsperson's permanent place. The identity (name, looks, AI id) belongs to the seat, and whoever the spawner puts there next takes it over. |
+| **Roster** | The list of who lives in each town, sent by the shard to the brain. Every request carries the list's stamp, so the brain never answers from a stale list. |
 | **Deed** | A public event the shard reports as possible news (a notable kill, a tame, a murder…). |
 | **Rumour** | A deed as it is told in a given town at a given time, worked out fresh on every read. |
 | **Exposure** | Which stories have actually reached a town. It drives effects like town unease. |

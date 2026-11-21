@@ -1130,6 +1130,7 @@ public abstract partial class BaseSpawner : Item, ISpawner
                 m.Spawner = this;
                 m.OnAfterSpawn();
                 OnSpawned(entry, m);
+                Server.Avallone.Townsfolk.Seats.OnSpawned(this, m); // Avallone townsfolk step: the place keeps the person
             }
             else if (entity is Item item)
             {
@@ -1287,6 +1288,7 @@ public abstract partial class BaseSpawner : Item, ISpawner
         base.OnDelete();
 
         Stop();
+        Server.Avallone.Townsfolk.Seats.OnSpawnerDeleted(this); // Avallone townsfolk step: its seats are retired
         RemoveSpawns();
     }
 

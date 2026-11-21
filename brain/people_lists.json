@@ -1,0 +1,441 @@
+{
+ "_doc": "SAMPLE lists for the public copy of Avallone. The live shard's lines for off-stage relatives (what became of them) and for homes are hand-written and kept private; these invented lines show the shape. class says whom a line suits (a child, a youth, a grown relative, a dead one), place where that relative may live, work whether the line names a way of earning a living, quarrel whether it is a falling-out.",
+ "fates": [
+  {
+   "id": "F001",
+   "text": "blows glass beads for necklaces",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F002",
+   "text": "tunes harps for wandering minstrels",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F003",
+   "text": "binds books in green leather",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F004",
+   "text": "makes kites and flies the finest one personally",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F005",
+   "text": "grinds lenses for spectacles",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F006",
+   "text": "makes horsehair wigs for vain old gentlemen",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F007",
+   "text": "trains falcons for a baron",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F008",
+   "text": "engraves names on tankards",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F009",
+   "text": "sharpens scissors at fairs",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F010",
+   "text": "draws coastlines for a chart-maker",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F011",
+   "text": "repairs clocks and is late for everything",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F012",
+   "text": "looks after a lighthouse and counts the gulls",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F013",
+   "text": "presses flowers and frames them for sale",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F014",
+   "text": "paints portraits of prize pigs",
+   "class": "grown",
+   "place": "any",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F015",
+   "text": "is famous for the best plum jam in three parishes",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F016",
+   "text": "whistles badly and does not care who hears",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F017",
+   "text": "knows forty riddles and tells them in the wrong order",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F018",
+   "text": "collects odd-shaped pebbles and labels them",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F019",
+   "text": "is saving up for a telescope",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F020",
+   "text": "has a tame magpie and blames it for anything missing",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F021",
+   "text": "wins every skittles match and is insufferable about it",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F022",
+   "text": "can name every star visible at midsummer",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F023",
+   "text": "broke off contact after a dispute over a misplaced ladle",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": true
+  },
+  {
+   "id": "F024",
+   "text": "is still sore about a copper kettle promised long ago",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": true
+  },
+  {
+   "id": "F025",
+   "text": "was not invited to a wedding and has mentioned it at every meeting since",
+   "class": "grown",
+   "place": "any",
+   "work": false,
+   "quarrel": true
+  },
+  {
+   "id": "F026",
+   "text": "digs for amber on a far beach",
+   "class": "grown",
+   "place": "away",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F027",
+   "text": "pilots a barge loaded with salt",
+   "class": "grown",
+   "place": "away",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F028",
+   "text": "teaches arithmetic at a temple school far off",
+   "class": "grown",
+   "place": "away",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F029",
+   "text": "feeds a camp of quarrymen up in the mountains",
+   "class": "grown",
+   "place": "away",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F030",
+   "text": "copies manuscripts in a faraway library",
+   "class": "grown",
+   "place": "away",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F031",
+   "text": "sailed off after a row about an inheritance and answers no messages",
+   "class": "grown",
+   "place": "away",
+   "work": false,
+   "quarrel": true
+  },
+  {
+   "id": "F032",
+   "text": "lives two lanes over and crosses to the far pavement to avoid a hello",
+   "class": "grown",
+   "place": "here",
+   "work": false,
+   "quarrel": true
+  },
+  {
+   "id": "F033",
+   "text": "collects beetles in a jar and has named each one",
+   "class": "child",
+   "place": "home",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F034",
+   "text": "has decided to become a dragon and practises roaring",
+   "class": "child",
+   "place": "home",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F035",
+   "text": "refuses to wear anything but a paper crown",
+   "class": "child",
+   "place": "home",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F036",
+   "text": "is teaching the cat to dance, without success",
+   "class": "child",
+   "place": "home",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F037",
+   "text": "sweeps a glassblower's workshop and dreams of the furnace",
+   "class": "youth",
+   "place": "home",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F038",
+   "text": "carries the pole for a lamplighter and yawns all day",
+   "class": "youth",
+   "place": "home",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F039",
+   "text": "was taken by the pox in a bad year",
+   "class": "dead_any",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F040",
+   "text": "choked on a cherry stone",
+   "class": "dead_any",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F041",
+   "text": "slipped away in the dark after weeks abed",
+   "class": "dead_any",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F042",
+   "text": "never woke from a bad turn at midsummer",
+   "class": "dead_any",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F043",
+   "text": "faded during a wet April, and no physician could say why",
+   "class": "dead_any",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F044",
+   "text": "was swept off a cliff path by a gale",
+   "class": "dead_grown",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F045",
+   "text": "went through thin ice on a pond",
+   "class": "dead_grown",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F046",
+   "text": "ate the wrong mushrooms",
+   "class": "dead_grown",
+   "place": "none",
+   "work": false,
+   "quarrel": false
+  },
+  {
+   "id": "F047",
+   "text": "was buried by a rockslide at the quarry",
+   "class": "dead_grown",
+   "place": "none",
+   "work": true,
+   "quarrel": false
+  },
+  {
+   "id": "F048",
+   "text": "was gored by a bull while droving",
+   "class": "dead_grown",
+   "place": "none",
+   "work": true,
+   "quarrel": false
+  }
+ ],
+ "homes": [
+  {
+   "id": "D01",
+   "text": "an attic over a spice-seller's, scented with pepper",
+   "who": "any"
+  },
+  {
+   "id": "D02",
+   "text": "a cabin at the end of a muddy lane",
+   "who": "any"
+  },
+  {
+   "id": "D03",
+   "text": "a loft reached by an outside staircase",
+   "who": "any"
+  },
+  {
+   "id": "D04",
+   "text": "a low dwelling with a green gate and a leaky gutter",
+   "who": "any"
+  },
+  {
+   "id": "D05",
+   "text": "half of a divided building, the calmer half",
+   "who": "any"
+  },
+  {
+   "id": "D06",
+   "text": "a converted dovecote, round, with nowhere to stand a cupboard",
+   "who": "any"
+  },
+  {
+   "id": "D07",
+   "text": "a crowded dwelling where somebody is always awake",
+   "who": "shared"
+  },
+  {
+   "id": "D08",
+   "text": "a floor split with relatives, with a queue for the wash basin",
+   "who": "shared"
+  },
+  {
+   "id": "D09",
+   "text": "the family's first dwelling, with initials cut in the lintel",
+   "who": "born"
+  },
+  {
+   "id": "D10",
+   "text": "the old birthplace, patched many times",
+   "who": "born"
+  }
+ ]
+}

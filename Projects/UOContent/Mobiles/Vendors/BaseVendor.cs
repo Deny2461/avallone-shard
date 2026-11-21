@@ -742,6 +742,7 @@ namespace Server.Mobiles
             base.OnMapChange(oldMap);
 
             CheckMorph();
+            Server.Avallone.Townsfolk.Seats.AfterMorph(this); // Avallone townsfolk step: the seat's identity is put back
 
             LoadSBInfo();
         }

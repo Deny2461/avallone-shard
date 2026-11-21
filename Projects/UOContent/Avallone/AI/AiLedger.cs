@@ -303,6 +303,15 @@ public class AiLedger : GenericPersistence
             return false;
         }
 
+        // Townsfolk step (Codex code R1 F4): the one boundary every recorder passes. Nothing is recorded with no NPC id
+        // (a quarantined NPC gets none from GetOrCreate), and nothing under an id captured earlier whose holder is
+        // quarantined now.
+        // (Codex code R2 #3: EVERY holder of the id is looked at - a player loaded with the same id does not hide the NPC.)
+        if (npcId == Guid.Empty || Server.Avallone.Townsfolk.Seats.IsIdQuarantined(npcId))
+        {
+            return false;
+        }
+
         // A deleted character no longer gets an id from GetOrCreate; use the one it had.
         Guid charId;
         if (!character.Deleted)
@@ -310,6 +319,13 @@ public class AiLedger : GenericPersistence
             charId = AiIdentity.GetOrCreate(character);
         }
         else if (!AiIdentity.TryGet(character, out charId))
+        {
+            return false;
+        }
+
+        // Townsfolk step (Codex code R3): no event is queued with an empty CHARACTER id either - an identity that was
+        // refused must never turn into an invalid row.
+        if (charId == Guid.Empty)
         {
             return false;
         }

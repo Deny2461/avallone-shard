@@ -274,6 +274,12 @@ public static class AiGateway
             return Task.FromResult(Record(AiReply.Fail(AiOutcome.Busy)));
         }
 
+        // Townsfolk step (Codex code R2 #3): nothing is queued for an NPC that is quarantined.
+        if (Server.Avallone.Townsfolk.Seats.IsIdQuarantined(request.NpcId))
+        {
+            return Task.FromResult(Record(AiReply.Fail(AiOutcome.Disabled)));
+        }
+
         if (_queue.Count >= MaxQueue)
         {
             // The worst queued item is last (lowest priority, newest). Push it out only for better work.
@@ -319,6 +325,14 @@ public static class AiGateway
             if (Clock() > pending.Deadline)
             {
                 Complete(pending, AiReply.Fail(AiOutcome.Expired));
+                continue;
+            }
+
+            // Townsfolk step (Codex code R2 #3): a request captured its NPC's id when it was queued. If that NPC is
+            // quarantined NOW it is never sent - it fails through the normal path, which also releases its lease.
+            if (Server.Avallone.Townsfolk.Seats.IsIdQuarantined(pending.Request.NpcId))
+            {
+                Complete(pending, AiReply.Fail(AiOutcome.Disabled));
                 continue;
             }
 

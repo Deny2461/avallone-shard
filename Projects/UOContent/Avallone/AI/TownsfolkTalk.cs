@@ -66,7 +66,13 @@ public static class TownsfolkTalk
 
     // Who counts: shopkeepers (incl. healers, bankers), escortable townsfolk and the other town characters.
     // Not Mirabel or companions (they have their own personas), not guards, monsters, pets or player vendors.
+    // Townsfolk step (design 3.4a, Quarantine): THE shared eligibility decision. An NPC whose seat ownership is
+    // unresolved is an ordinary stock vendor - no AI talk, no exchange, no AI id - until an operator settles it.
     public static bool IsTownsperson(Mobile m) =>
+        IsTownspersonType(m) && !Server.Avallone.Townsfolk.Seats.IsQuarantined(m);
+
+    // The type test alone (who COULD be an AI townsperson). Seats asks this, never IsTownsperson.
+    public static bool IsTownspersonType(Mobile m) =>
         m is BaseCreature { Deleted: false, Alive: true, Controlled: false, Summoned: false } bc &&
         m is not Mirabel && m is not Server.Avallone.Named.INamedNpc && m is not BaseCompanion && bc.Body.IsHuman &&
         m is BaseVendor or BaseEscortable or Actor or Artist or Gypsy or HarborMaster or Sculptor or BrideGroom;
@@ -564,10 +570,15 @@ public static class TownsfolkTalk
         ["name"] = npc.Name ?? "",
         ["role"] = RoleOf(npc),
         ["town"] = TownOf(npc),
-        ["trade"] = TradeOf(npc)
+        ["trade"] = TradeOf(npc),
+        // Townsfolk step, Stage 1 (design 3.7): two plain facts the brain was never told. An older brain's template
+        // ignores keys it does not use.
+        ["sex"] = npc.Female ? "woman" : "man",
+        ["kind"] = npc is BaseEscortable ? "traveller"
+            : Server.Avallone.Townsfolk.Seats.TryGetSeat(npc, out _) ? "resident" : "placed"
     };
 
-    private static string RoleOf(BaseCreature npc)
+    internal static string RoleOf(BaseCreature npc)
     {
         var title = npc.Title?.Trim();
         if (!string.IsNullOrEmpty(title))
@@ -616,6 +627,16 @@ public static class TownsfolkTalk
         }
     }
 
+    // Tests only: whether a player counts as connected (a test player has no client).
+    internal static Func<Mobile, bool> Online { get; set; } = m => m.NetState != null;
+
+    // May the reply that has just come back still be SAID and recorded? Checked after the await. Townsfolk step (Codex
+    // code R1 F4): the NPC must still be an eligible townsperson NOW - a quarantine that began while the request was
+    // out stops the line, its correction and every record that would follow it.
+    internal static bool CanDeliver(BaseCreature npc, Mobile from) =>
+        !(npc.Deleted || !npc.Alive || from.Deleted || !Online(from) || from.Map != npc.Map ||
+          !from.InRange(npc, StaleRange)) && IsTownsperson(npc);
+
     internal static Task RespondForTests(BaseCreature npc, Mobile from, string text, SpeechEventArgs claimed) =>
         RespondAsync(npc, from, text, claimed);
 
@@ -650,6 +671,23 @@ public static class TownsfolkTalk
         }
     }
 
+    // Stage 2 repair, decision 9 (the owner, chat, 2026-11-17): the speaking player's own name and every player name the gossip
+    // roster knows (RumourSpeech.CurrentRoster: cached 60 s, at most 500) - for the brain's name checks only, never a prompt.
+    internal static NameCheckAsk NameCheckFor(Mobile from)
+    {
+        var roster = Server.Avallone.Rumours.RumourSpeech.CurrentRoster();
+        var names = new List<string>(roster.Length);
+        foreach (var entry in roster)
+        {
+            if (!string.IsNullOrWhiteSpace(entry.Name))
+            {
+                names.Add(entry.Name);
+            }
+        }
+
+        return new NameCheckAsk(from?.Name ?? "", names.ToArray());
+    }
+
     // The reply itself; true only once the townsperson has SAID it.
     private static async Task<bool> ReplyAsync(BaseCreature npc, Mobile from, string text,
         System.Runtime.CompilerServices.StrongBox<bool> spoke)
@@ -681,15 +719,15 @@ public static class TownsfolkTalk
             Standing = Relations.Standing(npc, from), // 5c-2 2b
             Party = TravelParty.For(npc, from), // Stage A1: companions + pets the NPC can see
             Falling = RealWeather.Word(npc), // rumour step C3
-            Correction = Server.Avallone.Rumours.Corrections.AskFor(fix)
+            Correction = Server.Avallone.Rumours.Corrections.AskFor(fix),
+            NameCheck = NameCheckFor(from) // Stage 2 repair, decision 9
         };
 
         npc.Direction = npc.GetDirectionTo(from);
 
         var reply = await AiGateway.RequestAsync(request);
 
-        if (npc.Deleted || !npc.Alive || from.Deleted || from.NetState == null || from.Map != npc.Map ||
-            !from.InRange(npc, StaleRange))
+        if (!CanDeliver(npc, from))
         {
             return false;
         }

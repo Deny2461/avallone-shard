@@ -1,0 +1,155 @@
+{
+ "_doc": "SAMPLE constraint tags for the public copy of Avallone. They belong to the sample pasts in backgrounds.json and to the generic natures in nature.json; the live shard's tags for its private pasts are not included. A tag says what a sentence fixes about the speaker's life, so the ages and the family worked out for that person never contradict it. An entry that is absent fixes nothing.",
+ "vocabulary": {
+  "free": "read and judged: fixes nothing about age, kin, marriage or time in town",
+  "home": "here | elsewhere - born in the assignment town, or came from another",
+  "absence": "puts the person away from town for a stretch: no years-in-town number is stored (N8) unless away_years states its length",
+  "arrived": "child | young_adult - when a newcomer came; bounds the years in town",
+  "minage": "the person is at least this old",
+  "maxage": "the person is at most this old",
+  "parents": "dead - both parents are dead",
+  "siblings_min": "at least this many siblings exist",
+  "siblings_exact": "exactly this many siblings exist",
+  "birth_order": "youngest",
+  "sibling": "younger_brother - this particular sibling exists",
+  "kin_here": "married_sister - this relative lives in the assignment town, off-stage",
+  "kin_min": "at least this many LIVING relatives, real or off-stage",
+  "marital": "never | unplaced - unplaced: never put in a married unit, and nothing is said about a spouse",
+  "family_trade": "the sentence fixes what the family does for a living: living grown off-stage relatives take only fate lines that name no work",
+  "former_years": "a stated length of a former life, in years",
+  "former_years_min": "a vague length ('a few years'): at least this many",
+  "before_trade": "that former life came before the present trade, so its years add to the years at the trade (N10)",
+  "trade_only": "never did other work: years at the trade follow from age",
+  "years_trade_min": "at least this many years at the present trade",
+  "unsupported": "kin or a tie the records do not hold: the sentence stays, nothing is built on it, a follow-up is 'not known'",
+  "figurative": "a jab that names kin or a number only as a figure of speech: never a fact about the speaker's family; the facts text says so and scoring does not count it (repair A7)",
+  "away_years": "a stated stretch away from the home town, in years; only beside absence. Born here: years in town = age less this (decision 8)",
+  "years_town_open": "the sentence leaves the time spent in the town open: no years-in-town number is stored (decision 8)"
+ },
+ "tags": {
+  "personality:curmudgeon": {
+   "minage": 40
+  },
+  "personality:homesick": {
+   "home": "elsewhere"
+  },
+  "personality:courteous": {
+   "free": true
+  },
+  "personality:sentimental": {
+   "free": true
+  },
+  "personality:wistful": {
+   "free": true
+  },
+  "personality:private": {
+   "free": true
+  },
+  "personality:know_it_all": {
+   "free": true
+  },
+  "habit:sayings": {
+   "unsupported": "grandmother"
+  },
+  "habit:pet_name": {
+   "free": true
+  },
+  "habit:years": {
+   "free": true
+  },
+  "habit:exaggerates": {
+   "free": true
+  },
+  "habit:no_names": {
+   "free": true
+  },
+  "subject:your family": {
+   "kin_min": 1
+  },
+  "subject:a back that has ached for years": {
+   "minage": 25
+  },
+  "subject:an old knee that stiffens in the damp": {
+   "minage": 25
+  },
+  "subject:your sweetheart": {
+   "marital": "unplaced",
+   "unsupported": "sweetheart"
+  },
+  "subject:an apprentice learning your trade": {
+   "years_trade_min": 5
+  },
+  "subject:your old dog": {
+   "free": true
+  },
+  "subject:an old adventuring injury": {
+   "free": true
+  },
+  "subject:your late mentor": {
+   "free": true
+  },
+  "jab:7": {
+   "figurative": "grandmother"
+  },
+  "H01": {
+   "home": "here"
+  },
+  "H02": {
+   "home": "here"
+  },
+  "H03": {
+   "home": "here"
+  },
+  "H04": {
+   "home": "elsewhere"
+  },
+  "H05": {
+   "home": "elsewhere",
+   "unsupported": "cousin"
+  },
+  "H06": {
+   "home": "elsewhere"
+  },
+  "H07": {
+   "home": "elsewhere"
+  },
+  "H08": {
+   "home": "elsewhere",
+   "arrived": "young_adult"
+  },
+  "L01": {
+   "absence": true
+  },
+  "L02": {
+   "absence": true
+  },
+  "L03": {
+   "free": true
+  },
+  "L04": {
+   "former_years": 20,
+   "before_trade": true
+  },
+  "L05": {
+   "family_trade": true
+  },
+  "L06": {
+   "absence": true
+  },
+  "E002": {
+   "free": true
+  },
+  "E003": {
+   "free": true
+  },
+  "E009": {
+   "free": true
+  },
+  "E016": {
+   "free": true
+  },
+  "E018": {
+   "free": true
+  }
+ }
+}

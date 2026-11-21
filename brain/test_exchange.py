@@ -206,6 +206,36 @@ class Handler(unittest.TestCase):
             self.assertTrue(self.ask(body, "Then rest a while.")["ok"])
             self.assertNotIn("how far you have come", self.prompt())                   # the townsperson's prompt: never
 
+    def test_measure_trace_on_an_exchange_step(self):   # Stage 2 repair C1/D3
+        snap = {"given": True, "age": 51}
+        fake_people = lambda *a, **k: ("FACTS-X", {"people": "A", "nature_drop": [], "_snapshot": snap})
+        body = step1()
+        body.update(persona_key="townsfolk", persona_vars={"name": "Osric", "role": "tanner", "town": "Britain", "trade": "vendor"})
+        with mock.patch.object(brain, "people_block", fake_people):
+            out = self.ask(dict(body), "Then rest a while.")
+            self.assertNotIn("trace", out)
+            with mock.patch.dict(brain.CFG, {"measure_trace": True}):
+                out = self.ask(dict(body), "Then rest a while.")
+        self.assertEqual(out["trace"]["prompt_sha"], brain.prompt_sha(self.sent[-1]))
+        self.assertEqual(out["trace"]["facts"], "FACTS-X"); self.assertEqual(out["trace"]["snapshot"], snap)
+        self.assertFalse(any("snapshot" in json.dumps(x, default=str) for x in self.logs))
+
+    def test_the_townspersons_facts_get_the_exchange_names_and_drops(self):   # Stage 2 repairs A6 and A4
+        got = {}
+
+        def fake_people(req, npc, pv, conversation, turn, extra_names=()):
+            got["names"] = list(extra_names)
+            return "FACTS-OF-YOUR-LIFE", {"people": "A", "nature_drop": ["habit", "personality"]}
+        body = step1(roster=["Kestrel", "Rowan"])
+        body.update(persona_key="townsfolk", persona_vars={"name": "Osric", "role": "tanner", "town": "Britain", "trade": "vendor"})
+        with mock.patch.object(brain, "people_block", fake_people):
+            self.assertTrue(self.ask(body, "Then rest a while.")["ok"])
+        for n in ("Osric", "Elspeth Vale", "Kestrel", "Rowan"):
+            self.assertIn(n, got["names"])
+        self.assertIn("FACTS-OF-YOUR-LIFE", self.prompt())
+        self.assertNotIn("Your nature: you are", self.prompt())               # the dropped personality line
+        self.assertNotIn("A habit of speech", self.prompt())                  # the dropped habit
+
     def test_ok_line(self):
         out = self.ask(step0(), "Weary enough, Osric. The road was long.")
         self.assertEqual((out["ok"], out["say"], out["action"], out["kind"]), (True, "Weary enough, Osric. The road was long.", "none", "exchange"))
@@ -420,9 +450,22 @@ class CodexR2(Handler):
                 result["c"] = self.post("/v1/npc/respond", self.CONV)
         return threading.Thread(target=run), gate, result, in_model
 
+    def cleanup_seen(self):
+        """Codex Code R2 F2: the handler writes its reply BEFORE its `finally` runs end_foreground, so holding the
+        reply (or having joined the client thread) does not mean the count is back down yet. Returns (patch, event);
+        the event is set after the REAL end_foreground has returned. A test waits on it, bounded, and then makes its
+        original assertion - a clean-up that never happens still fails."""
+        ended, real = threading.Event(), brain.end_foreground
+
+        def end():
+            real()
+            ended.set()
+        return mock.patch.object(brain, "end_foreground", end), ended
+
     def test_no_exchange_is_admitted_while_a_conversation_is_being_answered(self):
         t, gate, result, in_model = self.held_conversation()
-        with mock.patch.object(brain, "LEDGER", None):
+        watch, ended = self.cleanup_seen()
+        with mock.patch.object(brain, "LEDGER", None), watch:
             t.start()
             self.assertTrue(in_model.wait(5))
             self.assertEqual(brain.FOREGROUND["n"], 1)
@@ -431,6 +474,7 @@ class CodexR2(Handler):
             self.assertFalse(brain.begin_background("summary"))           # nor a summary
             gate.set()
             t.join(5)
+            self.assertTrue(ended.wait(5))                                # the handler's own clean-up has run
         self.assertTrue(result["c"]["ok"])
         self.assertEqual(brain.FOREGROUND["n"], 0)
         self.logs.clear()
@@ -452,7 +496,8 @@ class CodexR2(Handler):
             xres["x"] = self.ask(step0(), "x")
 
         t, gate, result, in_model = self.held_conversation()
-        with mock.patch.object(brain, "load_persona", slow_load), mock.patch.object(brain, "LEDGER", None):
+        watch, ended = self.cleanup_seen()
+        with mock.patch.object(brain, "load_persona", slow_load), mock.patch.object(brain, "LEDGER", None), watch:
             tx = threading.Thread(target=run_exchange)
             tx.start()
             self.assertTrue(loading.wait(5))                              # exchange: parsed, loading its persona, no slot yet
@@ -464,18 +509,21 @@ class CodexR2(Handler):
             self.assertEqual((xres["x"]["ok"], self.calls), (False, 0))   # ...and the late exchange made NO model call
             gate.set()
             t.join(5)
+            self.assertTrue(ended.wait(5))                                # the conversation handler's clean-up has run
         self.assertTrue(result["c"]["ok"])
         self.assertEqual(brain.FOREGROUND["n"], 0)
 
     def test_foreground_count_survives_a_failed_conversation(self):
         def boom(rq, timeout=None):
             raise OSError("model down")
+        watch, ended = self.cleanup_seen()
         with mock.patch.object(brain.urllib.request, "urlopen", boom), mock.patch.object(brain, "LEDGER", None), \
-                mock.patch.object(brain, "log", lambda **k: None):
+                mock.patch.object(brain, "log", lambda **k: None), watch:
             try:
                 self.post("/v1/npc/respond", self.CONV)
             except Exception:
                 pass
+            self.assertTrue(ended.wait(5))                                # the handler's clean-up has run
         self.assertEqual(brain.FOREGROUND["n"], 0)
         self.assertTrue(brain.begin_background("summary"))
 

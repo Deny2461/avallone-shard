@@ -1,0 +1,13 @@
+{
+  "_doc": "The few fixed facts every townsperson knows about WHERE it is. Added 2026-11-15, after two NPCs in Britain said they were 'right here in Britannia': the town is Britain, Britannia is the kingdom and Sosaria is the world. Until this file the townsfolk persona said '... in {town}, in Britannia ...' and nothing else, and the model used the kingdom's name for the town. Re-read when it changes. enabled false = the persona text exactly as it was before (byte for byte).",
+  "enabled": true,
+  "world": "Sosaria",
+  "kingdom": "Britannia",
+  "_kingdom_towns": "The towns of the kingdom, as decided for this shard (2026-11-15): Delucia and Papua (the Lost Lands) ARE in the kingdom; Luna and Umbra (Malas) and Zento (the Tokuno Islands) are NOT: a townsperson there is told its town's name and that 'here' means that town, and nothing about a kingdom or a world.",
+  "kingdom_towns": [
+    "Britain", "Buccaneer's Den", "Cove", "Delucia", "Haven", "Jhelom", "Magincia", "Minoc", "Moonglow", "Nujel'm",
+    "Ocllo", "Papua", "Serpent's Hold", "Skara Brae", "Trinsic", "Vesper", "Wind", "Yew"
+  ],
+  "_not_a_town": "Region names the shard can send that are not a town. No place line at all for these.",
+  "not_a_town": ["the countryside"]
+}

@@ -1,0 +1,23 @@
+{
+ "_doc": "Stage 2 rules - every number here is Claude's unless marked (the owner). Changing any value changes who gets what: bump version.",
+ "version": 1,
+ "real_kin_share": 0.34,
+ "_real_kin_share": "(the owner, 2026-11-15: about 1 resident in 3 has a relative who is a real townsperson in the same town)",
+ "mixed_pair_share": 0.10,
+ "_mixed_pair_share": "(the owner: couples are mixed; the 1-in-10 share is Claude's number)",
+ "unit_mix_by_people": {"U1": 0.50, "U2": 0.15, "U3": 0.15, "U4": 0.20},
+ "age_bands": [[18, 24, 2.0], [25, 39, 4.0], [40, 54, 3.0], [55, 69, 1.5], [70, 80, 0.5]],
+ "role_minage": [["guildmaster|guildmistress|minister|harbor master|harbor mistress|keeper of", 30], ["banker|minter|architect|real estate", 24]],
+ "married_by_age": [[18, 24, 0.15], [25, 39, 0.45], [40, 59, 0.55], [60, 80, 0.45]],
+ "widowed_by_age": [[18, 39, 0.02], [40, 59, 0.10], [60, 80, 0.25]],
+ "parent_dead_by_age": [[18, 29, 0.15], [30, 44, 0.35], [45, 59, 0.65], [60, 80, 0.92]],
+ "sibling_count_weights": [3, 4, 3, 1],
+ "child_count_weights": [3, 3, 3, 1],
+ "sibling_dead_share": 0.10,
+ "child_dead_share": 0.05,
+ "place_weights": {"here": 0.35, "town": 0.35, "far": 0.30},
+ "birth_family_place": {"elsewhere": {"origin": 0.60, "far": 0.25, "here": 0.15}, "here": {"here": 0.60, "town": 0.20, "far": 0.20}},
+ "retired_from_age": 65,
+ "quarrel_share": 0.12,
+ "siblings_share_household": 0.5
+}

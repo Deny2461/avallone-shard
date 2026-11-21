@@ -152,8 +152,29 @@ def assign(ledger, npc_id, town, role="", trade="", now=None, log=None):
     return {"town": town, "home": h["id"], "life": life["id"], "event": e["id"]}
 
 
-def text(bg, standing_in):
-    """The three sentences for the prompt, wording bound to the stored town. None if an id is no longer in the lists."""
+# Repair A4 (Codex Method R1 F12; design 6.2b): the catalogue's place words, in the order they are replaced when the
+# NPC does NOT stand in its stored town. The approved sentences are otherwise unchanged; standing at home, the text is
+# exactly what it was. test_people_store.Places checks that no place word in the catalogue is left uncovered.
+PLACE_WORDS = ((re.compile(r"\bhere, in this very town\b"), "in {T}"), (re.compile(r"\bthis very town\b"), "{T}"),
+               (re.compile(r"\bthis town\b"), "{T}"), (re.compile(r"\bthe whole town\b"), "the whole of {T}"),
+               (re.compile(r"\bhalf the town\b"), "half of {T}"), (re.compile(r"\bhere\b"), "in {T}"))
+PLACE_SCAN = re.compile(r"\b(here|this (very )?town|the (whole )?town|half the town|our town|hereabouts)\b", re.IGNORECASE)
+
+
+def anchor(sentence, town):
+    """One catalogue sentence with its place words bound to the named stored town (for an NPC standing elsewhere)."""
+    for pat, rep in PLACE_WORDS:
+        sentence = pat.sub(rep.replace("{T}", town), sentence)
+    return sentence
+
+
+def text(bg, standing_in, here=None, same_role=True):
+    """The three sentences for the prompt, wording bound to the stored town. None if an id is no longer in the lists.
+    here=None: today's behaviour (compares town names). here=True/False (repair A4, from the roster): every place word
+    is bound to the stored town when not here, keeping the approved sentence; `standing_in` is then the roster's town
+    for this turn, or "" when it is not known. same_role=False (Codex Code R1 F6, read only with here given): the
+    person's trade is no longer the one their record was built for, so an `onlytrade` past (one that says the person
+    has never done other work) would now claim the NEW trade as lifelong - that one sentence is left out."""
     c = cfg()
     if not c or not bg:
         return None
@@ -161,6 +182,18 @@ def text(bg, standing_in):
     home, life, event = by_id.get(bg["home"]), by_id.get(bg["life"]), by_id.get(bg["event"])
     if not (home and life and event):
         return None   # a removed entry is never silently replaced by another past
+    if here is not None:
+        said = same_role or "onlytrade" not in life["tags"]
+        if here:
+            home_line = "" if home.get("town", "").lower() == (standing_in or "").lower() else home["text"]
+            life_line = life["text"]
+            return " ".join(x for x in (home_line, "Before this: " + life_line[0].lower() + life_line[1:] if said else "",
+                                        event["text"]) if x)
+        t = bg["town"] or ""
+        home_line = "" if home.get("town") and home["town"].lower() == (standing_in or "").lower() else anchor(home["text"], t)
+        life_line = anchor(life["text"], t)
+        return " ".join(x for x in (home_line, "Before this: " + life_line[0].lower() + life_line[1:] if said else "",
+                                    anchor(event["text"], t)) if x)
     here = (standing_in or "").lower() == (bg["town"] or "").lower()
     if "born" in home["tags"]:
         home_line = home["text"] if here else f"Born and raised in {bg['town']}, and lives elsewhere now."

@@ -81,7 +81,9 @@ toward NPCs who "do their own thing".
 | 5c-2 · promise guard | A stronger guard that spots a claimed promise and rewrites a reply that gives in | ⏸️ |
 | 5c-2 · 2d | **The rumour step:** a player can correct a story about themselves; serious stories no longer drift; real stories open with one plain sentence; made-up gossip travels as stories; the companion adds a line after gossip; weather follows the game's rain and snow; speech colours ("how sure the teller is" was dropped) | ✅ |
 | 5c-2 · 2e | **Who heard what:** NPCs stop volunteering stories you have heard, and rarely repeat them when asked; big deeds travel further; a town's **reputation** of a player; **a past for every townsperson**; gossip habits; ask about yourself; "Name, any news?" beside the crier; "bank" only near a banker; **the NPC decides whether to tell** | ✅ |
-| 5c-2 · next | Townsfolk fleshed out: **ages, households and kin**; **knowing their town** (rough directions to the bank, healer, inn); a personality that holds from visit to visit | 📐 |
+| 5c-2 · townsfolk 1 | **The place keeps the person:** an identity lock for every resident townsperson (same name, looks and memory after a respawn or a restore); the shard tells the brain who lives in each town; town, kingdom and world kept apart | ✅ |
+| 5c-2 · townsfolk 2 | **Townsfolk lives:** a stored age, household and kin for every resident, the facts written by code and never made up by the model; relatives in the same town name each other; a personality that holds from visit to visit; **knowing their town** (direction and rough distance to the nearest bank, healer, inn, smith and more) | ✅ |
+| 5c-2 · next | Lives for townsfolk who settle in a town later (so far only those present at the first build have one) | 💡 |
 | 5c-2 · rest | More named characters in town, with their own placement file | 📐 |
 | 5c-3 | Six new named NPCs | 📐 |
 | 5d | A storyline that moves on its own over months of played time, surfacing as rumours | 📐 |

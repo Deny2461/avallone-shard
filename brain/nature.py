@@ -68,8 +68,50 @@ def _choose(npc, slot, items, weight=lambda x: 1.0, key=lambda x: x):
     return best
 
 
+_pins = None   # townsfolk Stage 2: npc_id -> {"key", "habit", "subject"} (the STORED nature) or None; set by the brain
+
+
+def set_pins(fn):
+    """Townsfolk Stage 2 (design 6.4): from now on of() - and so every caller: both prompt paths, the habit gate, mood,
+    the labels - answers with the nature stored in the NPC's permanent record when there is one. None switches it off."""
+    global _pins
+    _pins = fn
+
+
 def of(npc_id):
-    """{key, name, group, line, lean, habit, habit_line, subject, jab} for this NPC, or None (off, no id, empty list)."""
+    """The NPC's EFFECTIVE nature: the stored (pinned) one when the brain has set a pin source and this NPC has a
+    record, else the natural pick. Same shape as natural()."""
+    p = natural(npc_id)
+    if p is None or _pins is None:
+        return p
+    try:
+        pin = _pins(str(npc_id))
+    except Exception:
+        pin = None          # a problem costs the pin for this call, never the reply
+    if not pin:
+        return p
+    c = cfg()
+    out = dict(p)
+    per = next((x for x in c.get("personalities") or [] if x["key"] == pin.get("key")), None)
+    if per is not None:
+        out.update(key=per["key"], name=per["name"], group=per.get("group", ""), line=per["line"], lean=per.get("lean", ""))
+    if "habit" in pin:
+        h = next((x for x in c.get("habits") or [] if x["key"] == pin["habit"]), None) if pin["habit"] else None
+        if h is None:       # no habit this NPC may show (e.g. the "years" habit with no number held - design N11)
+            out.update(habit="", habit_line="", habit_manner=False, habit_share=None)
+        else:
+            pet = _choose(str(npc_id), "pet", c.get("pet_names") or []) or "friend"
+            word = _choose(str(npc_id), "word", c.get("fav_words") or []) or "truly"
+            out.update(habit=h["key"], habit_line=h["line"].replace("{pet}", pet).replace("{word}", word),
+                       habit_manner=h.get("manner") is True, habit_share=h.get("share"))
+    if pin.get("subject") is not None:
+        out["subject"] = pin["subject"]
+    return out
+
+
+def natural(npc_id):
+    """The unpinned pick, straight from the catalogue: {key, name, group, line, lean, habit, habit_line, subject, jab}
+    for this NPC, or None (off, no id, empty list). The town build starts from this; talk uses of()."""
     c = cfg()
     npc = str(npc_id or "")
     if not c.get("enabled") or not npc:
@@ -159,7 +201,7 @@ def prompt_block(p, habit=True):
     sentence out of this turn's prompt (C4 - see habit_in_prompt)."""
     if not p:
         return ""
-    lines = [f"Your nature: you are {p['name']}. {p['line']}"]
+    lines = [f"Your nature: you are {p['name']}. {p['line']}" if p.get("line") else ""]   # "" = left out this turn (A4)
     if p["group"] == "prickly" and p["jab"]:
         lines.append(cfg().get("prickly_line", "").replace("{jab}", p["jab"]))
     if p["habit_line"] and habit:

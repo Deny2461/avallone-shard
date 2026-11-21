@@ -54,6 +54,15 @@ public static class Exchange
     // It is never extended and never recorded as "talked with".
     public static bool Reactions { get; private set; }
 
+    // 2026-11-15 (the owner, chat, during the townsfolk Stage 1 play test)
+    // The player's farewell ended THEIR conversation, but
+    // nothing told this class the reply answered a goodbye. false (the default) = a reply to a farewell starts no
+    // exchange and no reaction. true = as before this change. Setting avallone.ai.exchangeAfterFarewell.
+    public static bool AfterFarewell { get; private set; }
+
+    // The player's speech count at their latest line, when that line was a farewell (Conversation.IsFarewell).
+    private static readonly Dictionary<Serial, int> _farewellAt = [];
+
     // Step 2e D1 (rumour design C2 item 9; design §8.6): a made-up story the townsperson just told may be the subject of
     // an exchange with the companion it named. Switch avallone.ai.madeUpHandoff.
     public static bool MadeUpHandoff { get; set; } = true;
@@ -174,6 +183,7 @@ public static class Exchange
         MaxLines = Math.Clamp(ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangeMaxLines", MaxSteps), 1, MaxSteps);
         MemoryOn = ServerConfiguration.GetOrUpdateSetting("avallone.ai.npcMemory", false);
         Reactions = ServerConfiguration.GetOrUpdateSetting("avallone.ai.reactions", false);
+        AfterFarewell = ServerConfiguration.GetOrUpdateSetting("avallone.ai.exchangeAfterFarewell", false);
         MadeUpHandoff = ServerConfiguration.GetOrUpdateSetting("avallone.ai.madeUpHandoff", true);
         EventSink.Speech += OnSpeech;
         CommandSystem.Register("Exchanges", AccessLevel.Administrator, Exchanges_OnCommand);
@@ -236,6 +246,22 @@ public static class Exchange
         if (e.Mobile is PlayerMobile pm)
         {
             NoteSpeech(pm);
+
+            // Remember whether THIS line was a goodbye. Any later line of theirs replaces it, so only a reply that
+            // answers the farewell itself is affected (AfterReply compares the revision).
+            if (Conversation.IsFarewell(e.Speech?.Trim()))
+            {
+                _farewellAt[pm.Serial] = Revision(pm);
+            }
+            else
+            {
+                _farewellAt.Remove(pm.Serial);
+            }
+
+            if (_farewellAt.Count > 5000)
+            {
+                _farewellAt.Clear(); // bound memory; losing a mark only allows an exchange after one farewell
+            }
         }
     }
 
@@ -309,6 +335,15 @@ public static class Exchange
         try
         {
             var since = _since.TryGetValue(pm.Serial, out var n) ? n : RepliesBetween;
+
+            // The line this reply answers was the player's goodbye: they are leaving. Nothing is started for their
+            // companion - no exchange, no reaction, no story handed on. It counts as an ordinary reply in between.
+            if (!AfterFarewell && _farewellAt.TryGetValue(pm.Serial, out var at) && at == openingRevision)
+            {
+                _since[pm.Serial] = Math.Min(since + 1, 1000);
+                return;
+            }
+
             var story = MadeUpHandoff ? MadeUpStory(rumour) : null;
             _since[pm.Serial] = TryStart(npc, pm, party, spoken, excluded && story == null, since, openingRevision,
                 story != null ? null : reactSort, story) ? 0 : Math.Min(since + 1, 1000);
@@ -517,6 +552,9 @@ public static class Exchange
             var m = v.Mobile;
             why =
                 m.Deleted || !m.Alive ? $"{v.Name} is gone" :
+                // Townsfolk step (Codex code R1 F4): a townsperson's voice was captured when the exchange began; it must
+                // still be eligible before every model call and every line - a quarantine ends the exchange here.
+                v.Kind == "townsperson" && !TownsfolkTalk.IsTownsperson(m) ? $"{v.Name} may no longer take part" :
                 m.Hidden ? $"{v.Name} is out of sight" :
                 m.Map != pm.Map || !m.InRange(pm, Range) ? $"{v.Name} is out of earshot" :
                 (m as BaseCreature)?.ControlMaster != v.Master ? $"{v.Name} changed owner" : null;
@@ -740,6 +778,17 @@ public static class Exchange
             return;
         }
 
+        // Townsfolk step (Codex code R2 #3): each row names the OTHER speaker inside its facts, so checking a row's own
+        // npc id is not enough. If either participant is quarantined now, nothing is recorded in either direction.
+        foreach (var v in run.Voices)
+        {
+            if (Server.Avallone.Townsfolk.Seats.IsQuarantined(v.Mobile) || Server.Avallone.Townsfolk.Seats.IsIdQuarantined(v.AiId))
+            {
+                TalksNotRecorded++;
+                return;
+            }
+        }
+
         var day = Today();
         if (day != _talkedDay || _talked.Count > 5000)
         {
@@ -850,6 +899,8 @@ public static class Exchange
 
         Enabled = enabled;
         _active = null;
+        AfterFarewell = false;
+        _farewellAt.Clear();
         _revision.Clear();
         _restUntil.Clear();
         _since.Clear();
@@ -882,4 +933,6 @@ public static class Exchange
     internal static void SetMemoryForTests(bool on) => MemoryOn = on;
 
     internal static void SetReactionsForTests(bool on) => Reactions = on;
+
+    internal static void SetAfterFarewellForTests(bool on) => AfterFarewell = on;
 }

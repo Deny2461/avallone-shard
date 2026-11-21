@@ -621,6 +621,63 @@ The invented gossip used to be one random line per reply. Now most of it behaves
   greeting, but they answer when asked), some sceptics (a fixed line of doubt, written by code, after a story they
   really told).
 
+### The place keeps the person
+
+- **A seat, not a creature, owns the identity.** Every resident townsperson that a spawner made is tied to a seat. The
+  seat holds the AI identity, the name, the sex and the looks. When the spawner makes a replacement, the newcomer takes
+  the seat's identity, so memory and relationships carry on with "the same person".
+- **The register lives outside the world saves.** At every start it is reconciled against the loaded world before
+  anything can spawn or speak, so a restore from an older save cannot hand one person's identity to another.
+- **It never guesses.** Ownership that cannot be established is quarantined for an operator to decide (`[Seats`
+  commands). A player is never quarantined.
+- **One-way door.** Once a world has seats, a build without the seat engine must not run it; fallback is by settings.
+
+### The town list
+
+The shard builds a list of who lives in each town (id, name, role, sex, home spot, and whether they are a resident),
+sends it to the brain, and stamps every prompt request with the list's hash. The brain keeps the list and uses it for a
+turn only when the stamps match. Everything below that names a real townsperson reads the current list, never stored
+text, so a renamed or moved person is never described from old data.
+
+### Town, kingdom, world
+
+A small table of fixed facts: which towns belong to the kingdom, and the names of the kingdom and the world. The
+townsperson persona names the town the NPC lives and works in and says that "here" means that town. Only for a town the
+table lists does it also name the kingdom and the world, and it says that neither is the name of a town.
+
+### Townsfolk lives: ages, kin and households
+
+- **Worked out once, by code.** For every resident on the town list the brain works out an age, years in the town and
+  at the trade, whether they are married, a family and a household: one town at a time, in one transaction. It is a
+  pure function of the town list, the sentences the person already had (past, nature, habit) and the data files. No
+  clock, no randomness, no model; choices are made by hashing ids.
+- **It has to fit what they already say.** The existing sentences carry constraint tags (the youngest of several, came
+  here as a child, never married), and a profile must satisfy every tag before ages and kin are filled in.
+- **Some kin are real.** About one resident in three has a relative who is another townsperson of the same town: a
+  married pair, a pair and a grown child, a parent and a grown child, or two siblings. The rest of the family is
+  off-stage: each relative has a name, an age, a place (here, another town, far away) or a death, and a line about what
+  became of them. An off-stage relative is never given a player's name.
+- **Audited before it is stored.** Each finished town is checked against every rule (a parent old enough, spans that
+  add up, ties that agree from both sides) before anything is written; a town that fails stores nothing.
+- **The model is told, it does not invent.** Code writes the lines about the NPC's own life into the prompt. A real
+  relative's name, trade and whereabouts come from the current town list; without a usable list the relative is
+  mentioned without them. A fact that is not held is one plain line saying the NPC does not talk about it.
+- **The stored nature is the one that speaks.** The personality kept in the record is used on every prompt path, so it
+  holds from visit to visit.
+- **Limits.** Only residents present when a town was first built have a life so far. The model still supplies the
+  colour around the facts, and an NPC may decline to answer.
+- **Switched on in steps.** Three states: off, build only, build and talk. Going live, a checker bound to a written
+  list of exactly who must get a record read the brain's log, and a second one read every stored record back through
+  the brain's own reading code, before the talk was switched on.
+
+### Knowing their town
+
+For an NPC with a home spot, the brain finds the nearest of nine kinds of place in the same town (bank, healer, inn or
+tavern, smith, provisioner, stable, mage shop, tailor, shipwright): one of eight compass directions and one of three
+rough distances, measured home to home, with the keeper's current name. A keeper asked for their own kind of place says
+it is theirs. The same words say where a relative in the same town works. With no usable town list, or no such place in
+town, the line is simply absent: it is never guessed.
+
 ## 13. Companions
 
 A companion is a permanent character who travels with one player at a time and remembers everything you
@@ -698,8 +755,8 @@ Avallónë also tunes the game itself. Each rule is a setting in `AvalloneRules`
 
 ## 17. Testing and review
 
-- **Tests:** about 340 C# tests for the Avallónë code inside a content test suite of about 1,950, and about
-  820 brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
+- **Tests:** about 425 C# tests for the Avallónë code inside a content test suite of about 2,070, and about
+  1,000 brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
   revision; it needs the private history, so it is not in the public copy.
 - **Model trials:** a harness replays fixed conversations against candidate models, measuring speed and
   checking persona, era and refusal behaviour, before any model change.
