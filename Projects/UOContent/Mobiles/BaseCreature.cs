@@ -2719,6 +2719,8 @@ namespace Server.Mobiles
 
         public override void OnAfterDelete()
         {
+            Server.Avallone.Errands.Errands.Left(this); // Avallone errands: a deleted townsperson ends any answer ticket
+
             if (AIObject != null)
             {
                 AIObject.AITimer?.Stop();
@@ -3058,6 +3060,8 @@ namespace Server.Mobiles
 
         protected override void OnMapChange(Map oldMap)
         {
+            Server.Avallone.Errands.Errands.MapChanged(this, oldMap); // Avallone errands (design 3.6, 11.3): one counter test when idle
+
             CheckAIActive();
 
             base.OnMapChange(oldMap);
@@ -3065,6 +3069,8 @@ namespace Server.Mobiles
 
         protected override void OnLocationChange(Point3D oldLocation)
         {
+            Server.Avallone.Errands.Errands.Moved(this, oldLocation); // Avallone errands (design 3.6, 11.3): one counter test when idle
+
             CheckAIActive();
 
             base.OnLocationChange(oldLocation);
@@ -3486,6 +3492,7 @@ namespace Server.Mobiles
 
         public override void OnDeath(Container c)
         {
+            Server.Avallone.Errands.Errands.Left(this); // Avallone errands: a death ends any answer ticket
             Server.Avallone.Rumours.Deeds.OnCreatureDeath(this); // Avallone 5a: deed feed
 
             if (Spawner is BaseSpawner spawner)

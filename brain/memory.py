@@ -37,10 +37,14 @@ KINDS = {
                                  # world id; typed details only). Read ONLY by rumours.py (Rumours._fix).
     "rumour_heard",              # Step 2e: a story really spoken to the listener (char) by an NPC (npc), recorded after
                                  # speech; ids + suppression key only. Read ONLY by rumours.py (Rumours.heard_keys).
+    "errand_done",               # Errands build 1 (design v5 3.8): one completed errand, recorded under the SENDER's id;
+                                 # ids, places and clocks only - no amounts. Every one has a row in errand_receipt.
+                                 # Read ONLY by Ledger.errands_done().
 }
 # Stage A3 (Codex design R1-1): kinds no ordinary reader may ever see - not retrieval, not the full-text index, not
 # reflection. Each has its own dedicated reader.
-PRIVATE_KINDS = ("talked_with", "rumour_corrected", "rumour_heard")
+PRIVATE_KINDS = ("talked_with", "rumour_corrected", "rumour_heard", "errand_done")
+ERRAND_KINDS = ("errand_done",)   # kinds that go through the receipt path in ingest (design v5 3.8)
 NOT_PRIVATE = "kind NOT IN (" + ", ".join(f"'{k}'" for k in PRIVATE_KINDS) + ")"
 ITEM = re.compile(r"^((?:pet|petfix)\|[a-z]+( [a-z]+)?\|[A-Z][A-Za-z'\-]{1,15}|trade\|[a-z]+(?: and [a-z]+)?|home\|[A-Z][A-Za-z' ]{1,20}|request\|[^|]{3,90})$")
 CARD_ID = re.compile(r"^[a-z]:[A-Za-z0-9:_\-]{1,40}$")
@@ -76,6 +80,57 @@ TOMBSTONED = ("SELECT t.char_id FROM tombstones t JOIN events te ON te.event_id 
 
 MAX_FACTS_CHARS = 3000
 MAX_TEXT_CHARS = 600
+
+# Errands build 1 (design v5 3.8). The facts of an errand_done event, checked ONCE, when its receipt is first written.
+ERRAND_ID = re.compile(r"^[A-Za-z0-9:_\-]{1,36}$")
+ERRAND_PLACE = re.compile(r"^[A-Za-z][A-Za-z' \-]{0,39}$")
+ERRAND_FACT_KEYS = {"v", "errand", "kind", "route", "sender_id", "sender_map", "sender_town", "receiver_id",
+                    "receiver_map", "receiver_town", "played", "memory", "day", "head_start"}
+ERRAND_KIND_ROUTES = {("word", "kin"), ("word", "cousin"), ("word", "standin"), ("ask_after", "kin"),
+                      ("ask_after", "cousin"), ("introduce", "contact")}
+ERRAND_RECEIPT_TABLE = """CREATE TABLE IF NOT EXISTS errand_receipt (
+    event_id TEXT PRIMARY KEY,
+    fingerprint TEXT NOT NULL,
+    disposition TEXT NOT NULL CHECK (disposition IN ('accepted', 'set_aside')),
+    reason TEXT,
+    at_utc TEXT NOT NULL)"""
+
+
+def _whole(value, least):
+    """A whole number - never a bool, never a float (design 11.2: the memory clock arrives rounded down)."""
+    return isinstance(value, int) and not isinstance(value, bool) and value >= least
+
+
+def check_errand(ev):
+    """Raises ValueError unless this is a well-formed errand_done event. A missing field is a failure: being able to
+    fingerprint an event never makes it valid (Codex R5)."""
+    if not _whole(ev.get("schema"), 1) or ev["schema"] != SCHEMA_VERSION:
+        raise ValueError(f"errand: schema {str(ev.get('schema'))[:12]!r}")
+    npc, char, facts = ev.get("npc_id"), ev.get("char_id"), ev.get("facts")
+    if not isinstance(npc, str) or not ERRAND_ID.match(npc) or not isinstance(char, str) or not ERRAND_ID.match(char):
+        raise ValueError("errand: npc or character id")
+    if not isinstance(ev.get("at_utc"), str) or not ev["at_utc"]:
+        raise ValueError("errand: event time")
+    if not isinstance(facts, dict) or set(facts) != ERRAND_FACT_KEYS:
+        raise ValueError("errand: fact keys")
+    if not _whole(facts["v"], 1) or facts["v"] != 1:
+        raise ValueError("errand: facts version")
+    if (facts["kind"], facts["route"]) not in ERRAND_KIND_ROUTES:
+        raise ValueError("errand: kind or route")
+    for k in ("sender_id", "receiver_id"):
+        if not isinstance(facts[k], str) or not ERRAND_ID.match(facts[k]):
+            raise ValueError(f"errand: {k}")
+    for k in ("sender_map", "sender_town", "receiver_map", "receiver_town"):
+        if not isinstance(facts[k], str) or not ERRAND_PLACE.match(facts[k]):
+            raise ValueError(f"errand: {k}")
+    if facts["sender_id"] != npc or facts["sender_id"] == facts["receiver_id"]:
+        raise ValueError("errand: sender")
+    if not _whole(facts["errand"], 1) or not _whole(facts["played"], 0) or not _whole(facts["memory"], 0):
+        raise ValueError("errand: a whole number")
+    if not isinstance(facts["day"], str) or not VISIT_DAY.match(facts["day"]):
+        raise ValueError("errand: day")
+    if not isinstance(facts["head_start"], bool) or (facts["head_start"] and facts["kind"] != "introduce"):
+        raise ValueError("errand: head start")
 
 
 def now_utc():
@@ -278,6 +333,11 @@ class Ledger:
                     raise
         import reflection
         reflection.check_schema(self.db)
+        # Errands build 1 (design v5 3.8): one receipt per errand event. Made WITHOUT raising the database version:
+        # _migrate refuses a database newer than the brain knows, and an added table an older brain never reads must
+        # not be what stops a brain rollback. The events table itself is untouched.
+        with self.lock:
+            self.db.execute(ERRAND_RECEIPT_TABLE)
 
     # ---- writes -------------------------------------------------------------------------------------
 
@@ -306,6 +366,18 @@ class Ledger:
                         if epoch < 1 or seq < 1 or eid != f"{epoch}-{seq}":
                             raise ValueError("bad epoch/seq/event_id")
                         kind = str(ev["kind"])
+                        # Codex Code R1 C1: an identity that already belongs to an errand event is judged against that
+                        # event's receipt WHATEVER kind this arrival claims - before any kind-specific path and before
+                        # any side effect. (Replayed as "joined" it was acknowledged; as "character_deleted" it also
+                        # wrote a tombstone.) A changed kind changes the fingerprint, so it is a conflict.
+                        if kind in ERRAND_KINDS or self._errand_identity(eid):
+                            # Design v5 3.8: the identity is sound - from here an errand event is never "rejected" for
+                            # what it says. Receipt first; judged once; a conflict is refused, never acknowledged.
+                            why = self._ingest_errand(ev, eid, epoch, seq, kind)
+                            if why:
+                                raise ValueError(why)
+                            acked.append(eid)
+                            continue
                         if kind not in KINDS:
                             raise ValueError(f"unknown kind {kind[:30]!r}")
                         if int(ev.get("schema", 0)) != SCHEMA_VERSION:
@@ -358,6 +430,94 @@ class Ledger:
                 self.db.in_transaction and self.db.execute("ROLLBACK")
                 raise
         return acked, rejected
+
+    def _errand_identity(self, eid):
+        """Does this event id already belong to an errand - by its receipt, or by a stored event of an errand kind
+        (which, without a receipt, is damage and is refused as a conflict below)?"""
+        if self.db.execute("SELECT 1 FROM errand_receipt WHERE event_id = ?", (eid,)).fetchone() is not None:
+            return True
+        row = self.db.execute("SELECT kind FROM events WHERE event_id = ?", (eid,)).fetchone()
+        return row is not None and row["kind"] in ERRAND_KINDS
+
+    def _ingest_errand(self, ev, eid, epoch, seq, kind):
+        """Inside ingest's transaction, under its lock. Returns None (acknowledge) or the reason for a conflict.
+        Order (design v5 3.8): 1 look for a receipt; 2 same fingerprint -> replay, judge nothing again; 3 different ->
+        conflict; 4 no receipt -> check once and write event and receipt together; 5 an event without a receipt or a
+        receipt without an event is damage and is handled as a conflict - never mended from one side (design 11.4)."""
+        import errands_text
+        fingerprint = errands_text.event_fingerprint(ev)      # of the event as it arrived, before any cleaning
+        receipt = self.db.execute("SELECT fingerprint FROM errand_receipt WHERE event_id = ?", (eid,)).fetchone()
+        stored = self.db.execute("SELECT 1 FROM events WHERE event_id = ?", (eid,)).fetchone()
+        if kind not in ERRAND_KINDS and receipt is None and stored is None:
+            return "errand: not an errand event"          # cannot be reached through ingest; refused all the same
+        if receipt is not None or stored is not None:
+            if receipt is None:
+                return "errand: an event is stored under this identity without a receipt"
+            if stored is None:
+                return "errand: a receipt is stored under this identity without its event"
+            if receipt["fingerprint"] != fingerprint:
+                return "errand: different contents under an identity already stored"
+            return None                                        # an identical resend: the stored disposition stands
+        try:
+            check_errand(ev)
+            disposition, reason = "accepted", None
+        except (KeyError, TypeError, ValueError) as e:
+            disposition, reason = "set_aside", clean_text(e, 200)
+        try:
+            facts = clean_facts(ev.get("facts"))
+        except (TypeError, ValueError):
+            facts = "{}"
+        status = "rolled_back" if self._rolled_back_by_history(epoch, seq) else "live"
+        self.db.execute(
+            """INSERT INTO events
+               (event_id, epoch, seq, npc_id, char_id, kind, facts, at_utc, schema, status, received_utc)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            (eid, epoch, seq, clean_text(ev.get("npc_id", ""), 36), clean_text(ev.get("char_id", ""), 36), kind, facts,
+             clean_text(ev.get("at_utc", ""), 30), SCHEMA_VERSION, status, now_utc()),
+        )
+        self.db.execute("INSERT INTO errand_receipt (event_id, fingerprint, disposition, reason, at_utc) "
+                        "VALUES (?, ?, ?, ?, ?)", (eid, fingerprint, disposition, reason, now_utc()))
+        return None
+
+    def errand_set_aside(self, event_ids):
+        """The ids among these whose receipt says set_aside - read from the table, so a resend after a lost reply
+        reports it again (design v5 3.8). Order kept."""
+        ids = [str(e)[:40] for e in event_ids][:200]
+        if not ids:
+            return []
+        with self.lock:
+            rows = self.db.execute(
+                f"SELECT event_id FROM errand_receipt WHERE disposition = 'set_aside' AND event_id IN "
+                f"({','.join('?' * len(ids))})", ids).fetchall()
+        hit = {r["event_id"] for r in rows}
+        return [e for e in ids if e in hit]
+
+    def errands_done(self, char_id=None, npc_id=None):
+        """The ONLY reader of errand_done. A completion counts only if its event is live AND its receipt says accepted
+        (design v5 3.8): a receipt alone gives nothing, a rolled-back event gives nothing, a set-aside one gives
+        nothing; a deleted character's are gone. Oldest first. Each: event_id, epoch, seq, npc_id, char_id + its facts."""
+        where, args = ["e.kind = 'errand_done'", "e.status = 'live'", "r.disposition = 'accepted'",
+                       f"e.char_id NOT IN ({TOMBSTONED})"], []
+        if char_id is not None:
+            where.append("e.char_id = ?")
+            args.append(char_id)
+        if npc_id is not None:
+            where.append("e.npc_id = ?")
+            args.append(npc_id)
+        with self.rlock:
+            rows = self.rdb.execute(
+                "SELECT e.event_id, e.epoch, e.seq, e.npc_id, e.char_id, e.facts FROM events e "
+                "JOIN errand_receipt r ON r.event_id = e.event_id WHERE " + " AND ".join(where) +
+                " ORDER BY e.epoch, e.seq", args).fetchall()
+        out = []
+        for r in rows:
+            try:
+                facts = json.loads(r["facts"])
+            except ValueError:
+                continue
+            out.append({"event_id": r["event_id"], "epoch": r["epoch"], "seq": r["seq"], "npc_id": r["npc_id"],
+                        "char_id": r["char_id"], **facts})
+        return out
 
     def reconciled(self, epoch):
         """Codex 2b code review F1: True only if the LATEST reconciliation is a success for this shard epoch - so reads

@@ -1,5 +1,5 @@
-"""Townsfolk step, Stage 2 - people: ages, years, family (design §6). First built as a prototype for a measurement
-run; reviewed by Codex and live since November 2026, behind the "people" switch (off unless set).
+"""Townsfolk step, Stage 2 - people: ages, years, family (design §6). LIVE: reviewed by Codex and in use since townsfolk
+Stage 2 went live (build ab52a5b0a). (This header still said "PROTOTYPE ... NOT live" until the errands change corrected it.)
 
 What it does: for one town's residents it works out, from the sentences each one ALREADY has (background, personality,
 habit, pet subject - through the constraint tags in people_tags.json), a profile; then an age, years in town and at the

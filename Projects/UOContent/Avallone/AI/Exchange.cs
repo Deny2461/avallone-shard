@@ -322,14 +322,16 @@ public static class Exchange
     // Rumour step C1: `reactSort` = the reply's ReactSort (the brain sets it only on a reply that had gossip in its prompt
     // and whose prompt really asked for that sort of remark). The caller passes it only for a gossip turn - never for a
     // decency or shop-line turn. With the reactions switch on, such an excluded turn may start a one-line reaction.
-    public static void AfterReply(
+    // Errands build 1 (Codex Code R1 C4): returns true when an exchange (or a reaction) really STARTED from this reply, so
+    // the caller can give it its documented priority over an errand ask.
+    public static bool AfterReply(
         Mobile npc, Mobile from, TravelParty.PartyAsk party, string spoken, bool excluded, int openingRevision, int? reactSort = null,
         RumourInfo rumour = null
     )
     {
         if (from is not PlayerMobile pm || npc == null)
         {
-            return;
+            return false;
         }
 
         try
@@ -341,20 +343,24 @@ public static class Exchange
             if (!AfterFarewell && _farewellAt.TryGetValue(pm.Serial, out var at) && at == openingRevision)
             {
                 _since[pm.Serial] = Math.Min(since + 1, 1000);
-                return;
+                return false;
             }
 
             var story = MadeUpHandoff ? MadeUpStory(rumour) : null;
-            _since[pm.Serial] = TryStart(npc, pm, party, spoken, excluded && story == null, since, openingRevision,
-                story != null ? null : reactSort, story) ? 0 : Math.Min(since + 1, 1000);
+            var started = TryStart(npc, pm, party, spoken, excluded && story == null, since, openingRevision,
+                story != null ? null : reactSort, story);
+            _since[pm.Serial] = started ? 0 : Math.Min(since + 1, 1000);
             if (_since.Count > 5000)
             {
                 _since.Clear(); // bound memory; losing counts only allows an exchange a little sooner
             }
+
+            return started;
         }
         catch (Exception ex)
         {
             logger.Warning(ex, "Exchange: could not start");
+            return false;
         }
     }
 
@@ -466,6 +472,7 @@ public static class Exchange
         }
 
         Started++;
+        Server.Avallone.Errands.Errands.ExchangeStarted(pm); // errands build 1: any answer ticket this player holds is void
         if (run.React != null)
         {
             ReactionsStarted++;

@@ -85,6 +85,19 @@ public class AiLedger : GenericPersistence
     // spoken to a player). True only while the brain this shard delivers to has said its ingest accepts it; a queued
     // row is HELD until then, and one refused by a brain that does not accept the kind is KEPT, never dropped.
     public static bool HeardIngest { get; private set; }
+
+    // Errands build 1 (design v5 3.8): a fourth kind on the same rule - "errand_done". True only while the brain this
+    // shard delivers to has said its ingest accepts it (capability 4). Cleared with the other three on any transport
+    // failure. No errand step happens without it; a queued row is HELD until then and one refused by a brain that does
+    // not accept the kind is KEPT, in order.
+    public static bool ErrandsIngest { get; private set; }
+
+    // Errands build 1: told (event id, reason) when a capable brain set a completion aside, or refused an errand row.
+    // The errand module raises its fault on it. The memory queue is never held up by either.
+    public static Action<string, string> ErrandFault { get; set; }
+
+    // Errands build 1 (3.8 step 1): a completion is only begun when the record can certainly be queued.
+    public static bool HasRoom => State == LedgerState.Live && Reconciled && _outbox.Count < MaxOutbox;
     public static int OutboxCount => _outbox.Count;
     public static int MaxOutbox { get; private set; }
     public static long SavedEpoch => _savedEpoch;
@@ -209,26 +222,36 @@ public class AiLedger : GenericPersistence
         TopicsIngest = false;
         CorrectionsIngest = false;
         HeardIngest = false;
+        ErrandsIngest = false;
         TopicsHeld = 0;
     }
 
     internal static void SetTopicsIngestForTests(bool on) => TopicsIngest = on;
     internal static void SetCorrectionsIngestForTests(bool on) => CorrectionsIngest = on;
     internal static void SetHeardIngestForTests(bool on) => HeardIngest = on;
+    internal static void SetErrandsIngestForTests(bool on) => ErrandsIngest = on;
+
+    // Tests only: a reconciled, live ledger without a brain.
+    internal static void SetLiveForTests()
+    {
+        State = LedgerState.Live;
+        Reconciled = true;
+    }
 
     // Which brain capability a queued row needs before it may be sent: 0 none, 1 talked-with topics, 2 corrections,
-    // 3 story-heard records (Step 2e).
+    // 3 story-heard records (Step 2e), 4 completed errands (errands build 1).
     internal static int Need(LedgerEvent e) =>
-        CarriesTopics(e) ? 1 : e.Kind == "rumour_corrected" ? 2 : e.Kind == "rumour_heard" ? 3 : 0;
+        CarriesTopics(e) ? 1 : e.Kind == "rumour_corrected" ? 2 : e.Kind == "rumour_heard" ? 3 : e.Kind == "errand_done" ? 4 : 0;
 
     // Step 2e (Codex design R3 Q1): one place says whether a capability is confirmed - the old two-way expression
     // (need == 1 ? topics : corrections) cannot be extended to a third kind.
-    internal static bool Confirmed(int need, bool topics, bool corrections, bool heard) => need switch
+    internal static bool Confirmed(int need, bool topics, bool corrections, bool heard, bool errands = false) => need switch
     {
         0 => true,
         1 => topics,
         2 => corrections,
         3 => heard,
+        4 => errands,
         _ => false
     };
 
@@ -243,7 +266,7 @@ public class AiLedger : GenericPersistence
     // the two kinds of special row (each is judged by its own answer).
     internal static int SendableCount(
         System.Collections.Generic.IReadOnlyList<LedgerEvent> outbox, int batchSize, bool topicsIngest, bool correctionsIngest = false,
-        bool heardIngest = false
+        bool heardIngest = false, bool errandsIngest = false
     )
     {
         var n = Math.Min(batchSize, outbox.Count);
@@ -251,7 +274,7 @@ public class AiLedger : GenericPersistence
         for (var i = 0; i < n; i++)
         {
             var need = Need(outbox[i]);
-            if (!Confirmed(need, topicsIngest, correctionsIngest, heardIngest))
+            if (!Confirmed(need, topicsIngest, correctionsIngest, heardIngest, errandsIngest))
             {
                 return i; // held: nothing goes out past it
             }
@@ -387,12 +410,12 @@ public class AiLedger : GenericPersistence
 
     private sealed record ReconcileReply(
         bool Ok, string Verdict, int RolledBack, string Reason, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0,
-        int RumourHeard = 0
+        int RumourHeard = 0, int Errands = 0
     );
 
     private sealed record IngestReply(
         bool Ok, string[] Acked, string[] Rejected, string Error, int TalkedWithTopics = 0, int RumourCorrected = 0,
-        int RumourHeard = 0
+        int RumourHeard = 0, int Errands = 0, string[] ErrandSetAside = null
     );
 
     // Awaits resume on the game thread (ModernUO's EventLoopContext), so state is only touched there.
@@ -423,6 +446,7 @@ public class AiLedger : GenericPersistence
             TopicsIngest = reply.TalkedWithTopics == 1;
             CorrectionsIngest = reply.RumourCorrected == 1;
             HeardIngest = reply.RumourHeard == 1;
+            ErrandsIngest = reply.Errands == 1;
 
             if (reply.Verdict == "conflict")
             {
@@ -458,7 +482,7 @@ public class AiLedger : GenericPersistence
         {
             // Step 2: a row that carries topics goes only to an ingest that has confirmed it understands them. With
             // none sendable the batch is empty - that still asks the brain, and its answer re-reads the capability.
-            var take = SendableCount(_outbox, BatchSize, TopicsIngest, CorrectionsIngest, HeardIngest);
+            var take = SendableCount(_outbox, BatchSize, TopicsIngest, CorrectionsIngest, HeardIngest, ErrandsIngest);
             var batch = _outbox.GetRange(0, take);
             var events = batch.ConvertAll(e => new
             {
@@ -489,13 +513,14 @@ public class AiLedger : GenericPersistence
             var confirms = reply.TalkedWithTopics == 1;
             var confirmsCorrections = reply.RumourCorrected == 1;
             var confirmsHeard = reply.RumourHeard == 1;
+            var confirmsErrands = reply.Errands == 1;
             var done = new HashSet<string>(reply.Acked ?? []);
             var kept = 0;
             foreach (var id in reply.Rejected ?? [])
             {
                 var row = batch.Find(e => e.EventId == id);
                 var need = row == null ? 0 : Need(row);
-                if (need != 0 && !Confirmed(need, confirms, confirmsCorrections, confirmsHeard))
+                if (need != 0 && !Confirmed(need, confirms, confirmsCorrections, confirmsHeard, confirmsErrands))
                 {
                     kept++;
                     continue;
@@ -503,6 +528,23 @@ public class AiLedger : GenericPersistence
 
                 done.Add(id);
                 logger.Warning("Avallone memory: brain rejected event {EventId}", id);
+                if (need == 4)
+                {
+                    // Errands build 1 (design v5 3.8): refused by a capable brain - different contents under a stored
+                    // identity, or a damaged receipt. Dropped as every refused row is; the errand module stops.
+                    ErrandFault?.Invoke(id, "the brain refused this completion record");
+                }
+            }
+
+            // Errands build 1 (design v5 3.8): acknowledged and stored, but its facts failed the brain's check - it
+            // gives no standing. It leaves the outbox the ordinary way; the errand module stops until an operator looks.
+            foreach (var id in reply.ErrandSetAside ?? [])
+            {
+                if (batch.Exists(e => e.EventId == id && e.Kind == "errand_done"))
+                {
+                    logger.Warning("Avallone memory: the brain set errand completion {EventId} aside", id);
+                    ErrandFault?.Invoke(id, "the brain set this completion record aside");
+                }
             }
 
             _outbox.RemoveAll(e => done.Contains(e.EventId));
@@ -510,17 +552,18 @@ public class AiLedger : GenericPersistence
             TopicsIngest = confirms;
             CorrectionsIngest = confirmsCorrections;
             HeardIngest = confirmsHeard;
+            ErrandsIngest = confirmsErrands;
             if (kept > 0)
             {
                 logger.Warning(
-                    "Avallone memory: {Kept} event(s) of a newer kind (talked-with topics / rumour corrections / stories heard) were refused by " +
+                    "Avallone memory: {Kept} event(s) of a newer kind (talked-with topics / rumour corrections / stories heard / errands) were refused by " +
                     "a brain that does not accept them (replaced or rolled back?). KEPT, not dropped",
                     kept
                 );
             }
 
             var headNeed = _outbox.Count > 0 ? Need(_outbox[0]) : 0;
-            if ((take == 0 || kept > 0) && !Confirmed(headNeed, TopicsIngest, CorrectionsIngest, HeardIngest))
+            if ((take == 0 || kept > 0) && !Confirmed(headNeed, TopicsIngest, CorrectionsIngest, HeardIngest, ErrandsIngest))
             {
                 TopicsHeld = _outbox.Count;
                 _nextTry = Core.Now + TimeSpan.FromSeconds(30);
@@ -565,6 +608,7 @@ public class AiLedger : GenericPersistence
         TopicsIngest = false;
         CorrectionsIngest = false;
         HeardIngest = false;
+        ErrandsIngest = false;
         _nextTry = Core.Now + TimeSpan.FromSeconds(30);
         if (!_warnedDown)
         {
@@ -579,7 +623,8 @@ public class AiLedger : GenericPersistence
         $"loaded save held events up to {_savedEpoch}-{_savedSeq}" +
         $"; talked-with topics: ingest {(TopicsIngest ? "confirmed" : "not confirmed")}; rumour corrections: ingest " +
         $"{(CorrectionsIngest ? "confirmed" : "not confirmed")}; stories heard: ingest " +
-        $"{(HeardIngest ? "confirmed" : "not confirmed")}{(TopicsHeld > 0 ? $"; {TopicsHeld} HELD" : "")}";
+        $"{(HeardIngest ? "confirmed" : "not confirmed")}; errands: ingest {(ErrandsIngest ? "confirmed" : "not confirmed")}" +
+        $"{(TopicsHeld > 0 ? $"; {TopicsHeld} HELD" : "")}";
 
     public static async Task<string> BrainStatusAsync(Guid? npcId, Guid? charId)
     {

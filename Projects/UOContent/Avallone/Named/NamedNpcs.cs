@@ -403,6 +403,7 @@ public static class NamedNpcs
         if (AiIdentity.TryGet(pm, out var cid))
         {
             _visitedDay.Keys.Where(k => k.Chr == cid).ToList().ForEach(k => _visitedDay.Remove(k));   // Codex optional 1
+            Server.Avallone.Errands.Errands.Forget(cid); // errands build 1: its rows, time, stamps and guards go with it
             WorldRecorder(pm, "character_deleted");
         }
     }

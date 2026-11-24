@@ -1,0 +1,134 @@
+{
+  "lists_version": 2,
+  "approved": "the owner, chat, 2026-11-21 - Projects/Avallone-Errands-Lines-For-Approval.md, as drafted; section I (design v6) approved the same day, as drafted",
+  "speech_max": 300,
+  "msg_max": 70,
+  "ask": {
+    "word.kin": [
+      {"key": "ask.word.kin.1", "text": "By the by — would you carry a word to my {rel} {R}, {a_trade} here in {town}? Tell {them} {msg}."},
+      {"key": "ask.word.kin.2", "text": "If your way takes you past my {rel} {R}, {a_trade} here in {town}, would you tell {them} {msg}?"},
+      {"key": "ask.word.kin.3", "text": "A small favour, if you would. My {rel} {R} works as {a_trade} here in {town}. Tell {them} {msg}."}
+    ],
+    "word.cousin": [
+      {"key": "ask.word.cousin.1", "text": "You travel more than I do. Would you carry a word to my cousin {R}, {a_trade} in {town}? Tell {them} {msg}."},
+      {"key": "ask.word.cousin.2", "text": "If the road ever takes you to {town}, my cousin {R} is {a_trade} there. Would you tell {them} {msg}?"},
+      {"key": "ask.word.cousin.3", "text": "A favour, if you are willing. My cousin {R} is {a_trade} in {town}. Tell {them} {msg}."}
+    ],
+    "word.standin": [
+      {"key": "ask.word.standin.1", "text": "My {O_rel} {O} lives in {town}, further than my work lets me go. Would you carry word to {R}, {a_trade} there, to pass on? Tell {them} {msg}."},
+      {"key": "ask.word.standin.2", "text": "I cannot get to {town}, where my {O_rel} {O} lives. {R}, {a_trade} there, sees everyone. Would you ask {R} to tell {them} {msg}?"},
+      {"key": "ask.word.standin.3", "text": "A favour, if you would. {R} is {a_trade} in {town} and can get word to my {O_rel} {O}. The word is this: {msg}."}
+    ],
+    "ask_after.kin": [
+      {"key": "ask.ask_after.kin.1", "text": "Would you look in on my {rel} {R}, {a_trade} here in {town}, and bring me word of how {R} fares? I would rest easier for it."},
+      {"key": "ask.ask_after.kin.2", "text": "I would be glad of word of my {rel} {R}. {R} is {a_trade} here in {town}. Would you ask after {them} and tell me what you hear?"}
+    ],
+    "ask_after.cousin": [
+      {"key": "ask.ask_after.cousin.1", "text": "Would you look in on my {rel} {R}, {a_trade} in {town}, and bring me word of how {R} fares? I would rest easier for it."},
+      {"key": "ask.ask_after.cousin.2", "text": "I would be glad of word of my {rel} {R}. {R} is {a_trade} in {town}. Would you ask after {them} and tell me what you hear?"},
+      {"key": "ask.ask_after.cousin.3", "text": "If you pass through {town}, would you ask after my {rel} {R}, {a_trade} there, and bring the answer back to me?"}
+    ],
+    "introduce.contact": [
+      {"key": "ask.introduce.contact.1", "text": "You have been good company. If you are ever in {town}, look for {R}, {a_trade} like myself. Say that {S} of {S_town} sent you."},
+      {"key": "ask.introduce.contact.2", "text": "There is someone you should know. {R} is {a_trade} in {town}, same trade as mine. Tell {them} {S} of {S_town} sent you."},
+      {"key": "ask.introduce.contact.3", "text": "If your road leads to {town}, seek out {R}, {a_trade} there. Give {them} my name — {S} of {S_town}."}
+    ]
+  },
+  "msg": [
+    {"key": "m01", "for": "any", "text": "that I am keeping busy and think of {them} often"},
+    {"key": "m02", "for": "any", "text": "that the door is always open to {them}"},
+    {"key": "m03", "for": "any", "text": "that I wish {them} fair weather and good custom"},
+    {"key": "m04", "for": "any", "text": "that all is quiet here and I have no complaints"},
+    {"key": "m05", "for": "any", "text": "that I was thinking of {them} only this morning"},
+    {"key": "m06", "for": "any", "text": "that I hope the season is treating {them} kindly"},
+    {"key": "m07", "for": "any", "text": "that there is a place at my table whenever {their} road allows"},
+    {"key": "m08", "for": "any", "text": "that I send my good wishes, and more of them than I can say"},
+    {"key": "m09", "for": "any", "text": "that the days are full here, and I am glad of it"},
+    {"key": "m10", "for": "any", "text": "to mind the roads and keep a warm hearth"},
+    {"key": "m11", "for": "close", "text": "that I send my love"},
+    {"key": "m12", "for": "close", "text": "that I count myself lucky in my kin"},
+    {"key": "m13", "for": "close", "text": "that {their} name is spoken kindly at my table"},
+    {"key": "m14", "for": "far", "text": "that the road between us is long, but my thoughts make the journey"},
+    {"key": "m15", "for": "far", "text": "that I have not forgotten {them}, whatever the distance"}
+  ],
+  "close_relations": ["husband", "wife", "mother", "father", "son", "daughter", "brother", "sister"],
+  "yes": [
+    {"key": "yes.1", "text": "That is good of you. Safe roads."},
+    {"key": "yes.2", "text": "My thanks. I will not forget the kindness."},
+    {"key": "yes.3", "text": "Good. It is a weight off my mind already."}
+  ],
+  "no": [
+    {"key": "no.1", "text": "No matter. It will keep."},
+    {"key": "no.2", "text": "Think nothing of it. Another time, perhaps."},
+    {"key": "no.3", "text": "As you like. I only thought to ask."}
+  ],
+  "neutral": [
+    {"key": "neutral.1", "text": "Hm. Never mind — it will keep."},
+    {"key": "neutral.2", "text": "Ah, forgive me, my mind wandered. Another time."},
+    {"key": "neutral.3", "text": "No, leave it for now. It is no great matter."}
+  ],
+  "deliver": {
+    "word.kin": [
+      {"key": "del.word.1", "text": "Word from my {rel_back} {S}? That is good to have. Thank you for bringing it."},
+      {"key": "del.word.2", "text": "{S} sent you? My {rel_back} does not forget me, then. You have my thanks."},
+      {"key": "del.word.3", "text": "From {S}, my {rel_back}? You have brightened my day by carrying it."}
+    ],
+    "word.standin": [
+      {"key": "del.standin.1", "text": "For {O}, from {S}? Leave it with me. I will see that it is passed on."},
+      {"key": "del.standin.2", "text": "A word for {O}? I will pass it on. Thank you for carrying it."},
+      {"key": "del.standin.3", "text": "From {S} of {S_town}, for {O}. I have it, and I will pass it on."}
+    ],
+    "ask_after": [
+      {"key": "del.ask_after.1", "text": "{S} asks after me? Tell my {rel_back} {said}. You will find me at my work as {a_trade} here in {town}."},
+      {"key": "del.ask_after.2", "text": "So my {rel_back} {S} worries. Tell {S} {said}, and that I am {a_trade} here in {town}."},
+      {"key": "del.ask_after.3", "text": "Kind of {S} to ask. Say this from me: {said}. And that {a_trade} in {town} has no time for idleness."}
+    ],
+    "introduce": [
+      {"key": "del.introduce.1", "text": "{S} of {S_town} sent you? Then you are welcome here. Any friend of {S} may count on a fair hearing from me."},
+      {"key": "del.introduce.2", "text": "From {S}, is it? We are of one trade, {S} and I. You are welcome."},
+      {"key": "del.introduce.3", "text": "{S} of {S_town} speaks for you? That is enough for me. Well met."}
+    ]
+  },
+  "answer": [
+    {"key": "a01", "said": "that all is well with me here", "reported": "that all is well there"},
+    {"key": "a02", "said": "that I am kept busy, and glad of it", "reported": "{R} is kept busy, and glad of it"},
+    {"key": "a03", "said": "not to fret on my account", "reported": "that I am not to fret"},
+    {"key": "a04", "said": "that I have no complaints worth the carrying", "reported": "{R} has no complaints worth the carrying"},
+    {"key": "a05", "said": "that the days are full and the nights are quiet", "reported": "that the days are full there and the nights quiet"},
+    {"key": "a06", "said": "that I think of home often, and kindly", "reported": "{R} thinks of home often, and kindly"},
+    {"key": "a07", "said": "that I am content, and wish the same for all of you", "reported": "{R} is content, and wishes the same for us"},
+    {"key": "a08", "said": "that the work goes on and so do I", "reported": "that the work goes on, and {R} with it"}
+  ],
+  "return": [
+    {"key": "ret.1", "text": "You saw {R}? And the word is {reported} — and still at work as {a_trade} in {town}. Thank you. That eases my mind."},
+    {"key": "ret.2", "text": "So — {reported}, and {a_trade} in {town} yet. I am glad to hear it, and grateful to you for the journey."},
+    {"key": "ret.3", "needs_that": true, "text": "{R} sends back {reported}? Good. Good. {a_trade} in {town}, and thriving on it by the sound. My thanks."}
+  ],
+  "reward": [
+    {"key": "reward.1", "text": "I am no rich soul, friend, but a kindness done me seldom goes unpaid."}
+  ],
+  "as_heard": [
+    {"key": "as_heard.1", "text": "I have said my piece. Carry it as you heard it."}
+  ],
+  "thanks": [
+    {"key": "thanks.1", "text": "You made the journey, then. Thank you — it means a great deal to me that you went."},
+    {"key": "thanks.2", "text": "Back already? You have my thanks for going. It was kindly done."},
+    {"key": "thanks.3", "text": "So you went all that way for me. I will not forget it."}
+  ],
+  "system": {
+    "taken": "You have agreed to carry word for {S}. Say [Errands to see what you are carrying.",
+    "paid": "The errand for {S} is done. You receive {n} gold.",
+    "pack_full": "You have no room for the {n} gold you are owed. Make room, then say [Errands collect.",
+    "collected": "You collect {n} gold owed for errands.",
+    "collect_paused": "Errand pay is paused just now. The {n} gold you are owed is safe.",
+    "past_limit": "You have done all the paid errands you can for today. This one earns thanks alone.",
+    "lapsed": "Too long has passed. The errand for {S} has lapsed.",
+    "dropped": "You set aside the errand for {S}.",
+    "cannot_deliver": "That errand cannot be delivered just now.",
+    "see_log": "Say [Errands to see what you are carrying.",
+    "more_than_one": "You carry more than one errand that concerns {S}. Say [Errands to see them.",
+    "said": "{S} said: \"{line}\"",
+    "not_recalled": "The exact words cannot be recalled just now.",
+    "help": "Say [Errands, [Errands show <number>, [Errands drop <number> or [Errands collect."
+  }
+}

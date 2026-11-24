@@ -678,6 +678,45 @@ rough distances, measured home to home, with the keeper's current name. A keeper
 it is theirs. The same words say where a relative in the same town works. With no usable town list, or no such place in
 town, the line is simply absent: it is never guessed.
 
+### Errands
+
+A townsperson may ask a player a favour. There are three kinds so far, and none involves an item: **carry word** to
+someone (done when the message is delivered), **ask after** kin and bring the answer back (done on the return), and an
+**introduction** ("say I sent you": the receiver starts out warmer, and it pays in standing only).
+
+- **Who asks, and when.** Only someone who knows the player a little: the two have talked on at least two different
+  days and the townsperson's regard is not cold. Then it is a matter of chance (one in four by default), with at most
+  three errands open at once, a wait for each townsperson and player counted in the player's own time in the world, a
+  deadline counted the same way, and a daily allowance of paid errands. All of these are settings.
+- **Who receives.** The brain picks from what is stored, never from the model: a real relative in the same town; a
+  cousin in another town or someone the sender knows there (both drawn once from the town lists, fingerprinted, and
+  audited against the pinned fingerprints at every start); or, for an off-stage relative who lives in another town, a
+  stand-in there (the innkeeper, tavern keeper, barkeeper, provisioner or banker).
+- **Code writes every sentence.** The ask, the message, the answer brought back, the thanks and the pay line come from
+  a versioned list of fixed sentences, filled in by code and stored with the errand as text and hash. The model is
+  given only a short pointer line so that the talk around the errand stays in character, and it is told not to say yes
+  or no to a detail the player guesses at.
+- **Consent is a closed list.** An offer is accepted only by a line on the yes list and refused by one on the no list.
+  Two questions keep an offer open: what it pays (a fixed answer) and "say it again" (the stored sentence, word for
+  word). Anything else lets the offer lapse; nothing is ever accepted on a guess.
+- **Proof at every step.** For the ask, the yes, the delivery and the return the shard sends ids and keys only. The
+  brain looks the people up in the records it holds now, re-runs the route's rules and answers with a proof: the
+  request echoed, the data generation, a digest of the facts and the sentence. The shard acts only if all of it
+  matches what it asked. Anything unsure means no errand is asked, accepted, delivered or paid.
+- **Pay.** Gold comes from a fixed table by distance (same town, a neighbouring town, further away), plus a small karma
+  award through the game's own routine; the dials of both townsfolk record the kindness. The errand log is saved with
+  the world, so an errand and its pay state survive a restart.
+- **Switches and a fault flag.** Completion, new offers and the pointer line each have a switch, all off by default.
+  The shard offers and completes only while the brain vouches for its errand data (a probe every twenty seconds, a
+  lease that runs out after a minute). A payment that does not go through as intended raises a fault flag that stops
+  all errand pay until an operator has looked at the log and settled the row by hand.
+- **Commands.** `[Errands` lists a player's open errands with both people named by name and trade; `show` and `drop`
+  act on one of them, and `collect` picks up pay that is still owed. Operators have the switches, a status line and
+  the settle commands.
+- **Limits.** This step went live after a short play test and has not been tried against players who set out to cheat
+  it. When the town list changes, errands can pause for up to twenty seconds until the brain holds the new list. A
+  character with very high karma gains none from an errand, as with any small good deed in the game.
+
 ## 13. Companions
 
 A companion is a permanent character who travels with one player at a time and remembers everything you
@@ -755,8 +794,8 @@ Avallónë also tunes the game itself. Each rule is a setting in `AvalloneRules`
 
 ## 17. Testing and review
 
-- **Tests:** about 425 C# tests for the Avallónë code inside a content test suite of about 2,070, and about
-  1,000 brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
+- **Tests:** about 545 C# tests for the Avallónë code inside a content test suite of about 2,380, and about
+  1,100 brain tests. Privately there is also a byte-identical "golden" check that compares prompts with an earlier
   revision; it needs the private history, so it is not in the public copy.
 - **Model trials:** a harness replays fixed conversations against candidate models, measuring speed and
   checking persona, era and refusal behaviour, before any model change.

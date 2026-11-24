@@ -189,6 +189,10 @@ public sealed record AiRequest(
     // Stage 2 repair, decision 9: set only on an ordinary townsfolk turn (TownsfolkTalk.NameCheckFor); null = not sent.
     public NameCheckAsk NameCheck { get; init; }
 
+    // Errands build 1 (design v5 3.3; v6 12.3): set only on a townsfolk turn that may carry an ask, or one fixed
+    // instruction that holds no detail of any errand - "closed" or "pointer" (Errands.BeforeTurnAsync). null = not sent.
+    public object Errand { get; init; }
+
     // One conversation lease per NPC + subject: a second request while one is pending is refused.
     public string LeaseKey => $"{NpcId:N}:{SubjectId:N}";
 }
@@ -223,6 +227,10 @@ public readonly record struct AiReply(AiOutcome Outcome, string Text, string Mod
     // Rumour step, Part A: see CorrectableStory / CorrectionOffer. Both null on every ordinary reply and from an older brain.
     public CorrectableStory Correctable { get; init; }
     public CorrectionOffer Correction { get; init; }
+
+    // Errands build 1: the ask proof from the brain's fixed code, riding beside an ordinary reply. The model was told
+    // nothing of it. Null on every other reply and from an older brain. The shard checks it all again (Errands.AfterReply).
+    public Server.Avallone.Errands.ErrandProof Errand { get; init; }
 
     public static AiReply Success(string text, string model) => new(AiOutcome.Ok, text, model, 0, null);
 

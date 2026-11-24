@@ -1,5 +1,7 @@
 """Townsfolk step, Stage 2 - storing people and writing the "who you are" block (design §6.1, §6.5, §6.6, §8.1).
-First built as a prototype for a measurement run; reviewed by Codex and live since November 2026.
+LIVE: reviewed by Codex and in use since townsfolk Stage 2 went live (build ab52a5b0a). (This header still said
+"PROTOTYPE ... NOT live" until the errands change corrected it.) Errands build 1 adds with_cousin() and the
+`completeness` argument of block(); with no cousin fingerprint pinned the text is exactly what it was.
 
 Storage: one transaction per town, under the ledger's writer lock, no model or network call inside. The town's
 backgrounds are assigned in the same transaction; the finished town is audited (people.audit) BEFORE anything is
@@ -294,6 +296,22 @@ def view(ledger, person_id):
     return {"record": rec, "kin": kin, "house": house}
 
 
+def with_cousin(ledger, v, cousin_id):
+    """Errands build 1 (design v5 3.4): the ONE composed family view - `v` (view()) plus this person's cousin from the
+    cousin table, as a real relative after the siblings. Returns a new view, or None when the cousin has no resolved
+    record (the caller then treats the family as not whole - never as "no cousin"). A cousin joins nobody's household
+    and implies no new sibling, parent or grandparent."""
+    cid = str(cousin_id or "")[:36].lower()
+    with ledger.rlock:
+        row = ledger.rdb.execute("SELECT record FROM people_person WHERE person_id = ?", (cid,)).fetchone()
+    if v is None or row is None:
+        return None
+    rec = json.loads(row[0])
+    if rec.get("status") != "resolved":
+        return None
+    return dict(v, kin=list(v["kin"]) + [("cousin", "real", rec)])
+
+
 _pin_cache = {}
 
 
@@ -351,9 +369,12 @@ def pins(ledger, npc_id):
 
 # ------------------------------------------------------------------------------------------------- the block
 WORD = {("spouse", "man"): "husband", ("spouse", "woman"): "wife", ("parent", "man"): "father", ("parent", "woman"): "mother",
-        ("child", "man"): "son", ("child", "woman"): "daughter", ("sibling", "man"): "brother", ("sibling", "woman"): "sister"}
-PLAIN = {"spouse": "husband or wife", "parent": "parent", "child": "child", "sibling": "brother or sister"}
-ORDER = {"spouse": 0, "child": 1, "parent": 2, "sibling": 3}
+        ("child", "man"): "son", ("child", "woman"): "daughter", ("sibling", "man"): "brother", ("sibling", "woman"): "sister",
+        # Errands build 1 (design v5 3.4): a cousin is a real person in another town, from the separate people_cousin
+        # table. It is only ever in a view that with_cousin() made; the five stored tables hold no such tie.
+        ("cousin", "man"): "cousin", ("cousin", "woman"): "cousin"}
+PLAIN = {"spouse": "husband or wife", "parent": "parent", "child": "child", "sibling": "brother or sister", "cousin": "cousin"}
+ORDER = {"spouse": 0, "child": 1, "parent": 2, "sibling": 3, "cousin": 4}        # a cousin comes after siblings
 RULES = ("Never state a number, a name or a relative that is not given above. If you are asked about your own life and the "
          "answer is not above, say plainly that you do not know, or that it is not something you go into - never invent it.")
 NOW_AND_THEN = ("You know all of this as anyone knows their own life. Mention it only now and then, when the talk turns that "
@@ -513,7 +534,7 @@ def figurative_line(p):
 
 
 def block(v, town_now, where=None, avoid_names=(), role_now=None, arrangement="A", held_back=False, nature_now=None,
-          snap=None, works=False, kin_here=False):
+          snap=None, works=False, kin_here=False, completeness="off"):
     """The "who you are" lines for one NPC (design §8.1), or "" when nothing is stored. `works` (play test 2026-11-19,
     the owner): for a real relative standing in the town this person stands in,
     the line also says where that relative works, measured by code from this person's own place - off by default, and
@@ -526,6 +547,14 @@ def block(v, town_now, where=None, avoid_names=(), role_now=None, arrangement="A
     `snap` (repair C1/D3, for the measurement only): a dict filled, by the same code that writes each line, with exactly
     what this turn's text states - the truth a reply is scored against. Passing it never changes the text."""
     s = snap if isinstance(snap, dict) else {}
+    # Errands build 1 (design v5 3.4): `completeness` of the family in `v` - "off" (no cousins anywhere: the text is
+    # exactly what it was), "whole" (v came through with_cousin where there is one), or "unknown" (cousins are expected
+    # but cannot be used). "unknown" is NOT "no cousin": every clause a cousin could change is left out - today that is
+    # the kin-here summary in both its forms.
+    if completeness == "unknown":
+        kin_here = False
+    if completeness != "off":
+        s["completeness"] = completeness
     if v is None or arrangement not in ("A", "B"):
         s.update(given=False)
         return ""

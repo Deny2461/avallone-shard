@@ -83,6 +83,8 @@ toward NPCs who "do their own thing".
 | 5c-2 · 2e | **Who heard what:** NPCs stop volunteering stories you have heard, and rarely repeat them when asked; big deeds travel further; a town's **reputation** of a player; **a past for every townsperson**; gossip habits; ask about yourself; "Name, any news?" beside the crier; "bank" only near a banker; **the NPC decides whether to tell** | ✅ |
 | 5c-2 · townsfolk 1 | **The place keeps the person:** an identity lock for every resident townsperson (same name, looks and memory after a respawn or a restore); the shard tells the brain who lives in each town; town, kingdom and world kept apart | ✅ |
 | 5c-2 · townsfolk 2 | **Townsfolk lives:** a stored age, household and kin for every resident, the facts written by code and never made up by the model; relatives in the same town name each other; a personality that holds from visit to visit; **knowing their town** (direction and rough distance to the nearest bank, healer, inn, smith and more) | ✅ |
+| 5c-2 · errands 1 | **Errands:** a townsperson who knows you a little asks a favour: carry word to a relative, ask after kin in another town and bring the answer back, or an introduction. Every errand sentence and the pay are written by code; a small fixed sum in gold, and standing with both townsfolk; an errand log (`[Errands`). Live, and so far only lightly play-tested | ✅ |
+| 5c-2 · errands 2 | Goods wanted; carrying real news to a town it has not reached; a need that travels as gossip | 💡 |
 | 5c-2 · next | Lives for townsfolk who settle in a town later (so far only those present at the first build have one) | 💡 |
 | 5c-2 · rest | More named characters in town, with their own placement file | 📐 |
 | 5c-3 | Six new named NPCs | 📐 |

@@ -44,6 +44,9 @@ import named  # noqa: E402
 import cards  # noqa: E402
 import decency  # noqa: E402
 import dials  # noqa: E402  (5c-2 2b)
+import errands_people  # noqa: E402  (errands build 1: the cousin and contact tables)
+import errands  # noqa: E402  (errands build 1: the picker, the current proof, the readiness reply)
+import errands_text  # noqa: E402  (errands build 1: the approved lists and the code-written sentences)
 import mood  # noqa: E402  (5c-2 2c)
 import variety  # noqa: E402  (Step B 2026-11-08: repeat catcher)
 import acquaint  # noqa: E402  (Stage A3 2026-11-10: who an NPC has traded lines with)
@@ -769,6 +772,14 @@ def people_block(req, npc, pv, conversation, turn, extra_names=()):
     v = people_store.view(LEDGER, npc)
     if v is None:
         return "", {"people": arr, "people_record": False}
+    # Errands build 1 (design v5 3.4): one composed family view for ordinary talk AND the companion exchange (both come
+    # through here). With no cousin fingerprint pinned this is "off" and nothing below differs from before.
+    family = errands_people.completeness(errand_tables())
+    if family == "whole":
+        cousin = errands_people.cousin_of(LEDGER, npc)
+        if cousin is not None:
+            composed = people_store.with_cousin(LEDGER, v, cousin)
+            v, family = (composed, "whole") if composed is not None else (v, "unknown")
     held = ROSTER.usable(req.get("roster_stamp")) if ROSTER is not None else None
     avoid = request_names(req, extra_names)
     if held is not None:
@@ -783,16 +794,140 @@ def people_block(req, npc, pv, conversation, turn, extra_names=()):
     text = people_store.block(v, str(pv.get("town") or ""), where=held.where if held is not None else None,
                               avoid_names=[a for a in avoid if a], role_now=pv.get("role"), arrangement=arr, held_back=hb,
                               nature_now=nat_now, snap=snap, works=bool(CFG.get("relative_works")),
-                              kin_here=bool(CFG.get("kin_in_town")))
+                              kin_here=bool(CFG.get("kin_in_town")), completeness=family)
     places = town_knowledge.lines(held, npc) if text and CFG.get("town_knowledge") and held is not None else ""
     if places:
         text += "\n" + places
     info = {"people": arr, "people_held_back": hb, "people_chars": len(text), "people_roster": held is not None,
             "town_knowledge": bool(places), "nature_drop": drops}
+    if family != "off":
+        info["people_family"] = family
     if snap is not None:     # popped by the caller before logging; never written to the brain log
         snap["places"] = [list(x) for x in town_knowledge.nearest(held, npc)] if places else []
         info["_snapshot"] = snap
     return text, info
+
+
+_errand_tables = {"state": None}
+_errand_tables_lock = threading.Lock()
+
+
+def errand_tables(refresh=False):
+    """Errands build 1 (design v5 3.4): what the cousin and contact tables may be used for, audited ONCE per brain start
+    against the fingerprints pinned in the deployed settings (and again only on an operator's request). Never writes.
+    No ledger, or anything going wrong while auditing, is "unavailable" for a pinned table - never "off"."""
+    with _errand_tables_lock:
+        if _errand_tables["state"] is None or refresh:
+            try:
+                if LEDGER is None:
+                    raise RuntimeError("memory db unavailable")
+                st = errands_people.state(LEDGER, CFG)
+            except Exception as e:
+                why = f"{type(e).__name__}"
+                st = {"switch": bool(CFG.get("errand_tables")),
+                      "cousin": {"state": "unavailable" if CFG.get("errand_cousin_pin") else "off", "reason": why,
+                                 "fingerprint": None},
+                      "contact": {"state": "unavailable" if CFG.get("errand_contact_pin") else "off", "reason": why,
+                                  "fingerprint": None}}
+            _errand_tables["state"] = st
+            if st["cousin"]["state"] != "off" or st["contact"]["state"] != "off":
+                log(event="errand_tables", switch=st["switch"], cousin=st["cousin"]["state"],
+                    cousin_reason=st["cousin"]["reason"], contact=st["contact"]["state"],
+                    contact_reason=st["contact"]["reason"])
+        return _errand_tables["state"]
+
+
+ERRAND_ECHO = ("gen", "request", "ticket", "row", "version", "char", "speech_rev", "stamp")
+ERRAND_CLOSED = ("You asked this traveller a favour a moment ago and it was not agreed. The matter is closed: do not ask "
+                 "again, do not treat it as agreed, and promise nothing.")
+# Design v6 12.3, lines page I.4 (approved by the owner 2026-11-21): used only if the measurement chooses them over nothing.
+ERRAND_POINTER = {
+    # Wording approved by the owner 2026-11-22 after the rough run: a townsperson asked often
+    # just said yes, right or wrong. One sentence added to each: do not say yes and do not say no.
+    "sender": ("This traveller has agreed to do you a small favour; it is settled and written down. Do not describe it, "
+               "repeat it, guess at it or add to it. If they say what they think it was and ask whether they have it "
+               "right, do not say yes and do not say no. You have nothing to give for it — no goods, lodging, service "
+               "or pay. Whatever they ask or say about it, tell them only to ask you plainly what it was you wanted."),
+    "receiver": ("This traveller is carrying a word from you back to one of your kin; it is settled and written down. Do "
+                 "not repeat it, change it, guess at it or add to it. If they say what they think it was, or who it is "
+                 "for, and ask whether they have it right, do not say yes and do not say no. You have nothing to give "
+                 "for it — no goods, lodging, service or pay. Whatever they ask or say about it, tell them only to ask "
+                 "you plainly what they should tell them."),
+}
+
+
+def errand_neighbours(a, b):
+    """Do two towns neighbour each other on the town graph the rumours use? Decides the pay band (near or far). When
+    the graph cannot say - no rumour settings, a town it does not know - the answer is True, the LOWER band: an errand
+    is never paid as 'further' on a guess."""
+    try:
+        graph = RUMOURS._load()["_graph"]
+        ta, tb = RUMOURS.resolve_town(a), RUMOURS.resolve_town(b)
+        if ta not in graph or tb not in graph:
+            return True
+        return any(n == tb for n, _ in graph[ta])
+    except Exception:
+        return True
+
+
+def errand_world(req, stamp):
+    """What an errand proof may look at: the town list ONLY if the stamp the ERRAND request carries is the hash of the
+    held one (content equality, as for every prompt). `req` is read only for the names that must not be used."""
+    held = ROSTER.usable(stamp) if ROSTER is not None else None
+    return errands.World(LEDGER, held, errand_tables(), errands_text.load(), neighbours=errand_neighbours,
+                         avoid=request_names(req))
+
+
+def errand_final_check(text):
+    """The last check on a code-written errand sentence before its proof is returned (design v5 3.7)."""
+    return not decency.check(text)
+
+
+def errand_echo(ereq):
+    return {k: ereq.get(k) for k in ERRAND_ECHO}
+
+
+def errand_ask(req, ereq, npc, dial):
+    """3.3 step 2, fixed code: a candidate and its proof for this townsperson to ask this traveller, or None. The model
+    is told nothing of it."""
+    if LEDGER is None or not errands.may_ask(dial):
+        return None
+    w = errand_world(req, ereq.get("stamp"))
+    seed = str(ereq.get("ticket") or "")
+    blocked = [str(x) for x in (ereq.get("intro_blocked") or []) if isinstance(x, str)][:500]
+    pick = errands.pick(w, str(npc).lower(), seed, intro_offered=ereq.get("intro_offered") is not False,
+                        intro_blocked=blocked) if seed else None
+    if pick is None:
+        return None
+    proof = errands.prove(w, dict(pick, step="ask", sender=str(npc).lower(), seed=seed), errand_final_check)
+    return None if proof is None else dict(proof, echo=errand_echo(ereq))
+
+
+def errand_context(req, ereq, npc):
+    """Design v6 12.3: the one fixed instruction an ordinary turn may carry about an errand. It holds NO detail of any
+    errand and needs no proof - code gives the model no errand authority; questions about an errand are answered by the
+    shard's own code with no model call. "closed": an ask was just made and not agreed (wording unchanged from v5).
+    "pointer": an errand is open between this traveller and this townsperson; one wording per role. The two v5 lines
+    that named the receiver or the sender are gone, and with them the proof call an ordinary turn used to make."""
+    step = ereq.get("step")
+    if step == "closed":
+        return ERRAND_CLOSED
+    if step == "pointer":
+        return ERRAND_POINTER.get(ereq.get("role"), "")
+    return ""
+
+
+def standing_map(req):
+    """Codex Code R1 C3: the map of the NPC this request is about, put beside the town in its standing block - from
+    the town list usable for THIS request, never from a name. Without it the town's goodwill from errands is zero.
+    The shard's standing block carries a town name only."""
+    st = req.get("standing")
+    if not isinstance(st, dict) or st.get("map") or ROSTER is None:
+        return
+    held = ROSTER.usable(req.get("roster_stamp"))
+    at = held.where(req.get("npc_id")) if held is not None else None
+    if at:
+        st["map"] = at[0]
 
 
 def note_roster_stamp(req, path):
@@ -1329,6 +1464,9 @@ class Handler(BaseHTTPRequestHandler):
                 # townsfolk step, Stage 1 (design 4.5a): the hash of the roster this brain holds, or None
                 "roster_held": ROSTER.held_hash() if ROSTER is not None else None,
                 "world_table": world.state(),   # "on", "off", or "damaged: <why>" (then the old sentence is in use)
+                # errands build 1 (design v5 3.4): each added table's state and, when unavailable, why
+                "errand_tables": {k: (v if k == "switch" else {"state": v["state"], "reason": v["reason"]})
+                                  for k, v in errand_tables().items()},
             })
         elif self.path == "/v1/reflection/status":
             try:
@@ -1385,6 +1523,9 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/v1/npc/exchange/cancel":
             self.handle_exchange_cancel()
             return
+        if self.path.startswith("/v1/errands/"):
+            self.handle_errands(self.path[len("/v1/errands/"):])
+            return
         if self.path != "/v1/npc/respond":
             self.send_json(404, {"ok": False, "error": "not found"})
             return
@@ -1412,6 +1553,8 @@ class Handler(BaseHTTPRequestHandler):
         actions = clean_actions(req.get("actions"))
         nat_habit = None   # C4: None = no nature on this reply; else whether the habit sentence was in the prompt
         pp_text, pp_info = "", {}   # Stage 2: the who-you-are block and its log fields ("" = today's behaviour)
+        errand_out = None           # errands build 1: the ask proof riding on this reply, if there is one
+        errand_trace = None         # dev measurement only: what was asked of the errand code and whether a line was added
         pp_snap, tr_nature, tr_bg = None, "", ""   # repair C1/D3: what the measurement trace reports (measure_trace only)
         try:
             if req.get("persona_key"):
@@ -1690,9 +1833,31 @@ class Handler(BaseHTTPRequestHandler):
         dial = None
         if req.get("standing") is not None and LEDGER is not None:
             try:
+                standing_map(req)
                 dial = dials.compute(req, LEDGER, RUMOURS)
             except Exception as e:
                 log(event="dials", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
+        # Errands build 1 (design v5 3.3, 3.7). "ask": fixed code decides whether this townsperson may ask a favour and
+        # returns the proof beside the reply - the model is told NOTHING and writes an ordinary reply. "closed" /
+        # "pointer" (design v6): one fixed instruction that holds no detail of any errand. A problem costs the errand,
+        # never the reply.
+        ereq = req.get("errand") if isinstance(req.get("errand"), dict) else None
+        if ereq is not None:
+            try:
+                if ereq.get("step") == "ask":
+                    errand_out = errand_ask(req, ereq, npc, dial)
+                    log(event="errand", op="ask", request_id=rid, npc=npc, outcome="candidate" if errand_out else "none",
+                        **({"kind": errand_out["kind"], "route": errand_out["route"]} if errand_out else {}))
+                elif ereq.get("step") in ("pointer", "closed"):
+                    eline = errand_context(req, ereq, npc)
+                    if eline:
+                        situation = (situation + "\n\n" + eline).strip()
+                    errand_trace = {"step": ereq.get("step"), "applied": bool(eline),
+                                    "line_sha256": hashlib.sha256(eline.encode()).hexdigest() if eline else None}
+                    log(event="errand", op=ereq.get("step"), request_id=rid, npc=npc, outcome="line" if eline else "none")
+            except Exception as e:
+                errand_out = None
+                log(event="errand", request_id=rid, npc=npc, outcome="error", error=f"{type(e).__name__}: {e}")
         # 5c-2 2c: the NPC's shared mood, worked out fresh on every reply (M7.4) beside the dials; a problem costs the
         # mood, never the reply.
         md = None
@@ -2186,9 +2351,16 @@ class Handler(BaseHTTPRequestHandler):
                     # ask for the companion's one-line reaction instead - with this number and nothing of the reply.
                     # The shard still checks that the spoken line really names her.
                     out["reaction"] = {"sort": react_sort}
+            if errand_out is not None:   # errands build 1: the shard asks only if this reply is a plain one (3.3 step 3)
+                out["errand"] = errand_out
             if CFG.get("measure_trace"):   # repair C1/D3: dev measurement only - what this reply was built from
                 out["trace"] = {"prompt_sha": kept_sha, "attempts": 2 if first_try is not None else 1,
                                 "people": pp_info, "facts": pp_text, "snapshot": pp_snap, "nature": tr_nature,
+                                # errands build 1 (Codex Code R2 M2): whether the code-written errand line was REALLY
+                                # in this turn's prompt - asked for is not the same as applied
+                                "errand": errand_trace,
+                                # which START of the brain answered: a long collection binds every reply to one process
+                                "boot": errands.BOOT_ID,
                                 "background_line": tr_bg, "habit_in_prompt": nat_habit,
                                 # the final words are not (only) the model's: the scorer must know
                                 "by_code": {"decency_line": decency_line, "variety": variety_log, "scrubbed": bool(gen_scrubbed),
@@ -2505,16 +2677,74 @@ class Handler(BaseHTTPRequestHandler):
         except Exception as e:
             self.send_json(200, {"ok": False, "error": f"{type(e).__name__}"})
 
+    def handle_errands(self, op):
+        """Errands build 1 (design v5 3.1, 3.4, 3.9). No model and no Ollama on any of these.
+        ready - the readiness probe: values already held in memory, echoed with the probe number and generation.
+        proof - the current proof for accept (the yes check), deliver, return or remind (v6: the sentence that was
+                spoken, rebuilt for the shard's hash comparison; draws and writes nothing): ids and keys in, sentences out.
+        pass  - the operator's ONE draw of the cousin and contact tables; refused unless the deployed settings allow it
+                for this start (errand_pass) and the typed confirmation is given; never run twice."""
+        try:
+            req = json.loads(self.read_body() or b"{}")
+            if not isinstance(req, dict):
+                raise ValueError("not an object")
+            if op == "ready":
+                held = ROSTER.held_hash() if ROSTER is not None else None
+                self.send_json(200, {"ok": True, "probe": req.get("probe"), "gen": req.get("gen"),
+                                     **errands.readiness(errand_tables(), errands_text.load(), held, req.get("stamp"))})
+            elif op == "proof":
+                proof = None
+                # Errands yield to everything else (3.2): a line the house rule stops gets no errand step here - the
+                # shard then sends it as an ordinary turn, and the fixed answer is given there. Nothing of the line is logged.
+                yields = bool(CFG["decency_input_rebuke"] and decency.check(str(req.get("utterance") or "")[:500]))
+                if LEDGER is not None and not yields and req.get("step") in ("accept", "deliver", "return", "remind"):
+                    proof = errands.prove(errand_world(req, req.get("stamp")), req, errand_final_check)
+                log(event="errand", op=str(req.get("step"))[:10], request_id=req.get("request"),
+                    outcome="proof" if proof else "yields" if yields else "none")
+                self.send_json(200, {"ok": True, "proof": proof, "echo": errand_echo(req),
+                                     "data_gen": errands.data_generation(errand_tables(), errands_text.load())})
+            elif op == "pass":
+                if not CFG.get("errand_pass") or req.get("confirm") != "draw the cousin and contact tables once":
+                    self.send_json(403, {"ok": False, "error": "the pass is not allowed"})
+                    return
+                held = ROSTER.held() if ROSTER is not None else None
+                out = errands_people.run_pass(LEDGER, held, str(req.get("seed") or ""))
+                log(event="errand_tables", op="pass", cousin_pairs=out["cousin"]["count"],
+                    contacts=out["contact"]["count"])
+                errand_tables(refresh=True)
+                self.send_json(200, {"ok": True, "cousin": out["cousin"], "contact": out["contact"]})
+            else:
+                self.send_json(404, {"ok": False, "error": "not found"})
+        except Exception as e:
+            log(event="errand", op=op, outcome="error", error=f"{type(e).__name__}: {e}")
+            self.send_json(500, {"ok": False, "error": f"{type(e).__name__}"})
+
     def handle_memory(self, op):
         """Phase 4a1 ledger: events (ingest a batch), reconcile (once per shard start), status (counts)."""
         if LEDGER is None:
             self.send_json(503, {"ok": False, "error": "memory db unavailable"})
             return
         try:
-            req = json.loads(self.read_body() or b"{}")
+            raw = self.read_body() or b"{}"
+            req = json.loads(raw)
             if op == "events":
+                # Errands build 1 (design v5 3.8 and 11.1): a batch that carries an errand event is read again strictly,
+                # BEFORE any receipt is looked up or written. A duplicate key, a number that is not finite or a lone
+                # surrogate fails the whole request; nothing is half-written and the shard's ordinary retry applies.
+                events = req.get("events") or []
+                if any(isinstance(e, dict) and e.get("kind") in memory.ERRAND_KINDS for e in events):
+                    import errands_text
+                    try:
+                        events = errands_text.loads_strict(raw).get("events") or []
+                    except ValueError as e:
+                        log(event="memory", op="ingest", outcome="errand_transport_refused", error=str(e)[:80])
+                        self.send_json(400, {"ok": False, "error": "errand batch outside the protocol"})
+                        return
                 cleaned_before = sum(LEDGER.topics_cleaned.values())
-                acked, rejected = LEDGER.ingest(req.get("events") or [])
+                acked, rejected = LEDGER.ingest(events)
+                set_aside = LEDGER.errand_set_aside(acked)   # from the receipts: a resend reports it again
+                if set_aside:
+                    log(event="memory", op="ingest", outcome="errand_set_aside", set_aside=set_aside)
                 if sum(LEDGER.topics_cleaned.values()) != cleaned_before:   # counts by reason only - never the payload
                     log(event="memory", op="ingest", outcome="topics_cleaned", counts=dict(LEDGER.topics_cleaned))
                 if rejected:
@@ -2524,8 +2754,11 @@ class Handler(BaseHTTPRequestHandler):
                 # Rumour step, Part A: ... and the record kind "rumour_corrected" (a property of this build's
                 # ingest, not of the rumour_corrections switch).
                 # Step 2e (design §9.1): ... and "rumour_heard" (capability 3) - also a property of the build, not a switch.
+                # Errands build 1: ... and "errands" (capability 4; the errand_done kind and its receipts) - a property
+                # of this build's ingest, not of any errand switch.
                 self.send_json(200, {"ok": True, "acked": acked, "rejected": rejected, "talked_with_topics": 1,
-                                     "rumour_corrected": 1, "rumour_heard": 1})
+                                     "rumour_corrected": 1, "rumour_heard": 1, "errands": 1,
+                                     "errand_set_aside": set_aside})
             elif op == "reconcile":
                 verdict, rolled, reason = LEDGER.reconcile(req["new_epoch"], req["saved_epoch"], req["saved_seq"],
                                                            req.get("outbox_min_seq"))
@@ -2533,7 +2766,7 @@ class Handler(BaseHTTPRequestHandler):
                     new_epoch=req["new_epoch"], saved_epoch=req["saved_epoch"], saved_seq=req["saved_seq"])
                 people_session_reconciled(req["new_epoch"], verdict in ("ok", "fresh"))   # repair B3
                 self.send_json(200, {"ok": True, "verdict": verdict, "rolled_back": rolled, "reason": reason,
-                                     "talked_with_topics": 1, "rumour_corrected": 1, "rumour_heard": 1})
+                                     "talked_with_topics": 1, "rumour_corrected": 1, "rumour_heard": 1, "errands": 1})
             elif op == "status":
                 self.send_json(200, {"ok": True, **LEDGER.status(req.get("npc_id"), req.get("char_id"))})
             else:
@@ -2549,6 +2782,7 @@ class Handler(BaseHTTPRequestHandler):
             return
         try:
             req = json.loads(self.read_body() or b"{}")
+            standing_map(req)                      # the same map the conversation's dials are worked out with
             d = dials.explain(req, LEDGER, RUMOURS)
             if d is None:
                 self.send_json(200, {"ok": False, "error": "no dials: switched off, no standing, bad ids or a deleted character"})

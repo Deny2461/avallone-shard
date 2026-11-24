@@ -55,7 +55,8 @@ public sealed class SidecarAiClient : IAiNpcClient
             // Townsfolk step, Stage 1 (design 4.3): the hash of the shard's current roster on EVERY prompt request, all
             // modes - built here because this is the one place a request body is made. null = switch off, left out.
             Server.Avallone.Townsfolk.TownRoster.StampForRequest(),
-            request.NameCheck // Stage 2 repair, decision 9: left out unless set
+            request.NameCheck, // Stage 2 repair, decision 9: left out unless set
+            request.Errand     // errands build 1: left out unless set
         );
 
     public async Task<AiReply> SendAsync(AiRequest request, TimeSpan budget, CancellationToken token)
@@ -74,7 +75,8 @@ public sealed class SidecarAiClient : IAiNpcClient
         {
             Action = reply.Action ?? "none", Rumour = reply.Rumour, MemoryCards = reply.MemoryCards, Conduct = reply.Conduct,
             Kind = reply.Kind, Topics = CleanTopics(reply.Topics), ReactSort = CleanReact(reply.Reaction),
-            Correctable = CleanCorrectable(reply.Correctable), Correction = CleanCorrection(reply.Correction)
+            Correctable = CleanCorrectable(reply.Correctable), Correction = CleanCorrection(reply.Correction),
+            Errand = Server.Avallone.Errands.ErrandProof.Parse(reply.Errand) // a shape that is not right is "none"
         };
     }
 
@@ -220,12 +222,14 @@ public sealed class SidecarAiClient : IAiNpcClient
         [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
         string RosterStamp = null,
         [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
-        NameCheckAsk NameCheck = null
+        NameCheckAsk NameCheck = null,
+        [property: System.Text.Json.Serialization.JsonIgnore(Condition = System.Text.Json.Serialization.JsonIgnoreCondition.WhenWritingNull)]
+        object Errand = null
     );
 
     private sealed record SidecarResponse(
         bool Ok, string Say, string Action, string Model, string Error, RumourInfo Rumour, string[] MemoryCards, string Conduct,
         string Kind, JsonElement? Topics = null, JsonElement? Reaction = null, JsonElement? Correctable = null,
-        JsonElement? Correction = null
+        JsonElement? Correction = null, JsonElement? Errand = null
     );
 }

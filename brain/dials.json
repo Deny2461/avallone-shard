@@ -185,5 +185,15 @@
     "dials": true,
     "each": 5,
     "cap": 15
+  },
+  "errands": {
+    "_doc": "Errands build 1 (design v5 3.10), starting values to be set by measurement. Warmth: each completed errand counts for the sender and the receiver like a modest gift (warmth.gift.base x warmth_mult, smaller with each recent one, fading alike); head_start is added once for an introduction's receiver, only from an event that carries the flag. Trust: trust_each per errand for that townsperson up to trust_cap; town_each per errand naming the town at either end up to town_cap; both within window_played_h hours of the played clock.",
+    "warmth_mult": 0.75,
+    "head_start": 6,
+    "trust_each": 2,
+    "trust_cap": 6,
+    "town_each": 1,
+    "town_cap": 4,
+    "window_played_h": 168
   }
 }

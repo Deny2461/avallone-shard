@@ -64,6 +64,12 @@ The whole project follows one rule: **the AI adds flavour and life; it never get
   next week; if her sister keeps the stable across town, the sister says so too.
 - **They know their town.** Ask where the bank, the healer or the smith is, and a townsperson gives a compass
   direction and a rough distance to the nearest one in their own town, worked out from where people actually stand.
+- **They ask favours.** A townsperson who has come to know you a little may, now and then, ask you to carry word to a
+  relative, to ask after kin in another town and bring the answer back, or to look in on someone they know and say who
+  sent you. Answer yes or no in your own words. The asking sentence, the message and the pay are written by code, not
+  by the model, so the favour is word for word the same when you ask to hear it again. A message errand pays a small
+  fixed sum in gold (more when it takes you to another town), and both townsfolk remember the kindness. `[Errands`
+  lists what you are carrying.
 - **The place keeps the person.** A townsperson who is killed and respawns, or comes back after the world is restored
   from an older save, is the same person: same name, same looks, same memory of you.
 - **They know where they are.** Town, kingdom and world are kept apart, so someone asked where they are from names
@@ -101,6 +107,7 @@ hook was needed.
 | `Mobiles/` | Mirabel, the first talking NPC |
 | `Named/` | The shared layer for named NPCs, and a GM view that explains every number |
 | `Townsfolk/` | The **identity lock**: a seat for every resident townsperson, so name, looks and AI identity survive a respawn or a restore (a register kept outside the saves, a reconcile at every start, quarantine instead of guessing, the `[Seats` operator commands); the **town roster** the shard sends to the brain; a read-only census |
+| `Errands/` | **Errands:** when a townsperson may ask a favour, the offer and its closed yes/no lists, delivery, return and pay, the saved errand log, the switches and the `[Errands` commands for players and operators |
 | `Rumours/` | The **deed hooks** that turn public events into news, the played-time clock, and how rumours are spoken with names bound safely |
 | `Wanderers/` | The self-directed sellsword: travel, hunt, sell, bank, rest, with route planning |
 | *(top level)* | Shard rule switches (`AvalloneRules`), extra spawns, champion and serpent-pillar tweaks |
@@ -118,6 +125,7 @@ and keeps long-term memory in SQLite.
 | Relationships, mood, natures, moons | `dials.py` + `dials.json`, `mood.py` + `mood.json`, `nature.py` + `nature.json` |
 | Reputation and pasts | `reputation.py` (a town's view of a player), `backgrounds.py` + `backgrounds.json` (townsfolk pasts) |
 | Townsfolk lives | `people.py` (ages, years, families: pure functions with their own audit), `people_store.py` (storage, and the code-written lines about an NPC's own life), `people_rules.json`, `people_tags.json`, `people_lists.json`, `people_names.json`, `townroster.py` (the town list the shard sends), `town_knowledge.py` (the nearest places, by direction), `world.py` + `world.json` (town, kingdom, world) |
+| Errands | `errands.py` (who may be asked to carry what to whom, and the proof the shard checks at every step), `errands_people.py` (cousins in other towns and people a townsperson knows: drawn once, fingerprinted, audited at every start), `errands_text.py` + `errands_lists.json` (the fixed sentences and the closed word lists) |
 | Guards | `decency.py`, `shop_hint.py`, `variety.py` (repeat catcher) |
 | Personas | `personas/` (sample personalities) |
 | Knowledge | `lore.py`, `companion_secrets.py` (the code only; the secret text lives outside the repository) |
@@ -127,9 +135,9 @@ and keeps long-term memory in SQLite.
 
 - `Distribution/Data/Avallone/`: companion home spots, gift likes, extra spawners, turning-point rules
   (sample) and the word list used for name matching.
-- `Projects/UOContent.Tests/Tests/Avallone/`: about 425 C# tests across 44 files. The shard's content test
-  suite runs about 2,070 tests.
-- `brain/test_*.py`: about 1,000 Python tests across 50 files. Run them **one file at a time**. A
+- `Projects/UOContent.Tests/Tests/Avallone/`: about 545 C# tests across 47 files. The shard's content test
+  suite runs about 2,380 tests.
+- `brain/test_*.py`: about 1,100 Python tests across 60 files. Run them **one file at a time**. A
   single-process run of all of them has known cross-file leakage.
 
 ## Running it, in outline

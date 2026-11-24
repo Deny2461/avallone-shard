@@ -2256,6 +2256,8 @@ namespace Server.Mobiles
 
         protected override void OnLocationChange(Point3D oldLocation)
         {
+            Server.Avallone.Errands.Errands.Moved(this, oldLocation); // Avallone errands (design 3.6, 11.3): FIRST, with the OLD position
+
             CheckLightLevels(false);
 
             DuelContext?.OnLocationChanged(this);
@@ -2311,6 +2313,8 @@ namespace Server.Mobiles
 
         protected override void OnMapChange(Map oldMap)
         {
+            Server.Avallone.Errands.Errands.MapChanged(this, oldMap); // Avallone errands (design 3.6, 11.3): FIRST, with the OLD map
+
             if (Map != Faction.Facet && oldMap == Faction.Facet || Map == Faction.Facet && oldMap != Faction.Facet)
             {
                 InvalidateProperties();
@@ -2479,6 +2483,7 @@ namespace Server.Mobiles
 
         public override void OnDeath(Container c)
         {
+            Server.Avallone.Errands.Errands.Left(this); // Avallone errands: a death ends any answer ticket
             base.OnDeath(c);
             Server.Avallone.Rumours.Deeds.OnPlayerDeath(this); // Avallone 5a: deed feed
 

@@ -21,7 +21,7 @@ public static class TownsfolkTalk
     // Named: normal talking distance. Unnamed: within 4 tiles - 3 missed a healer at 3.6 (the owner, chat, 2026-10-02).
     private const int HearRange = 8;
     private const int NearestRange = 4;
-    private const int StaleRange = 10;
+    internal const int StaleRange = 10; // internal: the errand ticket's "still together" test uses the same range
     private const int HistoryLines = 6;
 
     private static readonly TimeSpan PerPlayerCooldown = TimeSpan.FromSeconds(3);
@@ -710,6 +710,26 @@ public static class TownsfolkTalk
         // Rumour step, Part A: this line uses up the correction ticket, if the last reply left one (Corrections.cs).
         var fix = Server.Avallone.Rumours.Corrections.Take(npc, from, openingRevision);
 
+        // Errands build 1 (design v5 3.2): at most ONE errand thing on a turn, chosen before the brain is called - a
+        // return, a delivery, the answer to an ask, or possibly a new ask. Errands yield to a story correction. With the
+        // errand switches off this returns at once and nothing below differs.
+        var errand = await Server.Avallone.Errands.Errands.BeforeTurnAsync(npc, from, text, openingRevision, fix != null);
+        if (errand.Handled)
+        {
+            // The errand answered this line itself with a code-written sentence; no model call is made.
+            // Design v6 12.3: neither the player's line nor the code sentence goes into the history the model is sent.
+            // Code gives the model no errand authority - what was asked, agreed, delivered or answered is the shard's.
+            if (errand.Spoke)
+            {
+                spoke.Value = true;
+                talk.Last = Core.Now;
+            }
+
+            return errand.Spoke;
+        }
+
+        // (Where an errand call was awaited and the step did not happen, BeforeTurnAsync has already checked that the two
+        // are still together; with no errand in play nothing was awaited and nothing here differs from before.)
         var request = new AiRequest(AiIdentity.GetOrCreate(npc), AiIdentity.GetOrCreate(from), null, text, AiPriority.Conversation)
         {
             PersonaKey = PersonaKey,
@@ -720,7 +740,8 @@ public static class TownsfolkTalk
             Party = TravelParty.For(npc, from), // Stage A1: companions + pets the NPC can see
             Falling = RealWeather.Word(npc), // rumour step C3
             Correction = Server.Avallone.Rumours.Corrections.AskFor(fix),
-            NameCheck = NameCheckFor(from) // Stage 2 repair, decision 9
+            NameCheck = NameCheckFor(from), // Stage 2 repair, decision 9
+            Errand = errand.Ask             // errands build 1: null on nearly every turn
         };
 
         npc.Direction = npc.GetDirectionTo(from);
@@ -756,11 +777,25 @@ public static class TownsfolkTalk
         }
         TravelParty.Note(from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind == "decency"); // A1 floor
         // Stage A2: if this line spoke to the player's companion by name, she may answer (switch avallone.ai.exchanges).
-        Exchange.AfterReply(
+        var exchange = Exchange.AfterReply(
             npc, from, request.Party, spoken, reply.Rumour != null || reply.Conduct != null || reply.Kind is "decency" or "shop",
             openingRevision, Exchange.ReactSortOf(reply), // rumour step C1
             reply.Rumour                                  // Step 2e D1: a made-up story it fully told may be handed on
         );
+        // Errands build 1 (design v5 3.2, 3.3 steps 3-4; Codex Code R1 C4): errands yield to everything else. The ask line
+        // is spoken - in this same game-thread call, never cut short - only after an ordinary PLAIN reply (no story told,
+        // no conduct flag, not shop or decency, not a correction) AND only if no exchange with the player's companion
+        // started from that reply. An exchange that did start has the turn; nothing is asked and no ticket is made.
+        // Design v6 12.3: the ask is a code-written errand sentence and is NOT added to the history the model is sent.
+        if (!exchange)
+        {
+            Server.Avallone.Errands.Errands.AfterReply(
+                npc, from, errand, reply.Errand,
+                ReferenceEquals(spoken, filled) && fix == null && reply.Rumour == null && reply.Conduct == null &&
+                reply.Kind is not ("decency" or "shop"), openingRevision
+            );
+        }
+
         Relations.Visited(npc, from); // 5c-2 2b: familiarity + the day's warmth, only once a reply was really said
         Relations.Conduct(npc, from, reply);
         talk.Last = Core.Now;

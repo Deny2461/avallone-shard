@@ -231,7 +231,72 @@ def warmth(ledger, npc_id, char_id, mpt_now, rest, items=None):
         total += worth
         if items is not None:
             items.append({"kind": r["kind"], "day": f.get("day"), "now": round(worth, 2)})
+    total += errand_warmth(ledger, npc_id, char_id, mpt_now, items)      # errands build 1: 0.0 until one is recorded
     return _clamp(rest + total, -100.0, 100.0), total
+
+
+def errand_rows(ledger, npc_id, char_id):
+    """Errands build 1 (design v5 3.10): this character's completed errands in which this townsperson was the sender or
+    the receiver - live, accepted by their receipt (memory.Ledger.errands_done is the only reader of the kind), once per
+    errand id, oldest first by the memory clock. [] when the ledger has no such reader or nothing is recorded."""
+    reader = getattr(ledger, "errands_done", None)
+    if reader is None:
+        return []
+    me, seen, out = str(npc_id).lower(), set(), []
+    for x in sorted(reader(char_id=char_id), key=lambda x: (x.get("memory", 0), x.get("epoch", 0), x.get("seq", 0))):
+        if me not in (str(x.get("sender_id")).lower(), str(x.get("receiver_id")).lower()) or x.get("errand") in seen:
+            continue
+        seen.add(x.get("errand"))
+        out.append(x)
+    return out
+
+
+def errand_warmth(ledger, npc_id, char_id, mpt_now, items=None):
+    """Warmth from completed errands: each sized like a modest gift (gift base x errands.warmth_mult), smaller with
+    each recent one exactly as gifts are, fading on the memory clock like everything else. An introduction's receiver
+    also gets the head start - ONLY from an event that carries the head-start flag, never inferred from an empty
+    history. 0.0 with no errands section in the settings."""
+    w, e = cfg()["warmth"], cfg().get("errands") or {}
+    if not e:
+        return 0.0
+    hl, g = float(w["half_life_mh"]) * 3600, w["gift"]
+    window, recent, total, me = float(g["recent_mh"]) * 3600, [], 0.0, str(npc_id).lower()
+    for x in errand_rows(ledger, npc_id, char_id):
+        m = float(x.get("memory", 0))
+        fade = 0.5 ** (max(0.0, float(mpt_now) - m) / hl)
+        recent = [t for t in recent if 0 <= m - t < window]
+        worth = g["base"] * float(e.get("warmth_mult", 0.75)) / (1 + len(recent)) * fade
+        recent.append(m)
+        if x.get("head_start") is True and str(x.get("receiver_id")).lower() == me:
+            worth += float(e.get("head_start", 0)) * fade
+        total += worth
+        if items is not None:
+            items.append({"kind": "errand", "day": x.get("day"), "what": x.get("kind"), "now": round(worth, 2)})
+    return total
+
+
+def errand_trust(ledger, npc_id, char_id, town, pt, map_=None):
+    """(personal, town) trust from errands, both bounded on purpose (3.10). Personal: errands.trust_each per completed
+    errand for THIS townsperson, at most trust_cap. The town's goodwill: errands.town_each per errand of this character
+    naming this MAP AND TOWN at either end, one count per errand, at most town_cap. Both only within the last
+    window_played_h hours of the played clock. Never a rumour, never spoken, no part in the reputation's story or label.
+    Codex Code R1 C3: a town is its map and its name together - Britain on one facet is not Britain on another. With
+    no map known for the townsperson there is NO town goodwill (unsure, so nothing); personal trust is unaffected."""
+    e = cfg().get("errands") or {}
+    reader = getattr(ledger, "errands_done", None)
+    if not e or reader is None:
+        return 0.0, 0.0
+    window = float(e.get("window_played_h", 168)) * 3600
+    recent = lambda x: 0 <= float(pt) - float(x.get("played", 0)) <= window
+    mine = sum(1 for x in errand_rows(ledger, npc_id, char_id) if recent(x))
+    here, seen = (str(map_ or "").lower(), str(town or "").lower()), set()
+    for x in reader(char_id=char_id) if all(here) else ():
+        ends = ((str(x.get("sender_map")).lower(), str(x.get("sender_town")).lower()),
+                (str(x.get("receiver_map")).lower(), str(x.get("receiver_town")).lower()))
+        if recent(x) and here in ends:
+            seen.add(x.get("errand"))
+    return (min(float(e.get("trust_cap", 6)), float(e.get("trust_each", 2)) * mine),
+            min(float(e.get("town_cap", 4)), float(e.get("town_each", 1)) * len(seen)))
 
 
 def band(value, dial):
@@ -307,6 +372,11 @@ def compute(req, ledger, rumours, detail=False, now=None):
     else:
         deeds = deed_respect(live, char)
     respect = _clamp(resp_base + resp_env + deeds, -100.0, 100.0)
+    # Errands build 1 (design v5 3.10): what this townsperson, and their town, think of the errands this character
+    # has carried - two small bounded terms beside everything above.
+    errand_own, errand_town = errand_trust(ledger, npc, char, town, pt, str(st.get("map") or "")[:40])
+    if errand_own or errand_town:
+        trust = _clamp(trust + errand_own + errand_town, -100.0, 100.0)
     items = [] if detail else None
     wm = warmth(ledger, npc, char, mpt, tr["warmth_rest"], items)
     if wm is None:
@@ -323,6 +393,8 @@ def compute(req, ledger, rumours, detail=False, now=None):
                         "superstitious": tr["superstitious"], "stories_live": len(live),
                         "reputation": ({k: rep[k] for k in ("renown", "dread", "jest", "label")} if rep else None),
                         "dread": round(dread, 1)}}
+    if errand_own or errand_town:
+        out["sources"]["errands"] = {"own": errand_own, "town": errand_town}
     if rep is not None and rc.get("line") and rep.get("line"):
         out["reputation_line"] = rep["line"]
     if detail:

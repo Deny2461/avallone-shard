@@ -51,6 +51,11 @@ public static class Seats
 
     public static int SeatCount => _register?.Count ?? 0;
 
+    // Errands build 1 (Codex Code R1 C2): goes up BEFORE every change to who holds which seat, who is quarantined, or
+    // the seat register on disk - never down, never reset while the shard runs. A content hash of the town list can
+    // return to an earlier value (A -> B -> A); this cannot. An errand ticket made at one revision is void at any other.
+    public static long Revision { get; private set; }
+
     public static void Configure()
     {
         Enabled = ServerConfiguration.GetOrUpdateSetting("avallone.townsfolk.seats", false);
@@ -237,6 +242,7 @@ public static class Seats
 
         try
         {
+            Revision++;
             _register.Commit(RegisterPath);
             return true;
         }
@@ -256,6 +262,7 @@ public static class Seats
             return;
         }
 
+        Revision++;
         if (m != null && _quarantined.Add(m))
         {
             logger.Warning("Seats: {Name} ({Serial}) is quarantined - {Why}", m.Name, m.Serial, why);
@@ -284,6 +291,7 @@ public static class Seats
 
             if (_register.Add(bad))
             {
+                Revision++;
                 _occupants[m] = bad.Key;
                 Commit("conflict at adoption");
             }
@@ -300,6 +308,7 @@ public static class Seats
             {
                 row.State = SeatState.Conflict;
                 row.Reason = "the seat's AI id is held by someone else";
+                Revision++;
                 _occupants[m] = row.Key;
                 Commit("conflict at refill");
                 Quarantine(m, $"seat {row.Key}: its AI id is held by a player or another live NPC");
@@ -309,6 +318,7 @@ public static class Seats
             ApplyLooks(m, row.Looks);
             row.State = SeatState.Occupied;
             row.LastSerial = m.Serial.Value;
+            Revision++;
             _occupants[m] = row.Key;
 
             if (!Commit("refill"))
@@ -339,6 +349,7 @@ public static class Seats
             return;
         }
 
+        Revision++;
         _occupants[m] = row.Key;
 
         if (!Commit("new seat"))
@@ -354,6 +365,14 @@ public static class Seats
         if (!_active || bc == null)
         {
             return;
+        }
+
+        // Errands (Codex Code R2 note 5): EVERY creature that is deleted comes through here - a monster's corpse as
+        // much as a townsperson. The revision goes up only when this creature really holds a seat or is quarantined;
+        // an unrelated deletion changes nothing and must not void anybody's errand ticket.
+        if (_quarantined.Contains(bc) || _occupants.ContainsKey(bc))
+        {
+            Revision++;
         }
 
         _quarantined.Remove(bc);
@@ -434,7 +453,9 @@ public static class Seats
     {
         _exposed = false;
         OffReason = null;
+        Revision++;
         _occupants.Clear();
+        Revision++;
         _quarantined.Clear();
         _deletingSpawners.Clear();
 
@@ -459,6 +480,7 @@ public static class Seats
 
             foreach (var (m, key) in loaded)
             {
+                Revision++;
                 _occupants[m] = key; // kept, so the bindings stay in the saves and these NPCs stay quarantined
             }
 
@@ -481,6 +503,7 @@ public static class Seats
 
         foreach (var (m, key) in loaded)
         {
+            Revision++;
             _occupants[m] = key;
         }
 
@@ -643,6 +666,7 @@ public static class Seats
 
                     if (_register.Add(bad))
                     {
+                        Revision++;
                         _occupants[m] = key;
                     }
 
@@ -662,6 +686,7 @@ public static class Seats
                     continue;
                 }
 
+                Revision++;
                 _occupants[m] = key;
             }
         }
@@ -867,6 +892,7 @@ public static class Seats
             return false;
         }
 
+        Revision++;
         _quarantined.Remove(m);
         report = $"Cleared: {m.Name} ({m.Serial}) now holds seat {key}. It was in conflict because: {why}.";
         logger.Warning("Seats: operator cleared the conflict on seat {Seat} for {Name} ({Serial}); it was: {Why}", key, m.Name, m.Serial, why);
@@ -919,7 +945,9 @@ public static class Seats
             return false;
         }
 
+        Revision++;
         _occupants[m] = row.Key;
+        Revision++;
         _quarantined.Remove(m);
         report = $"Seated: {m.Name} ({m.Serial}) in a new seat {row.Key}, as it is.";
         logger.Warning("Seats: operator seated {Name} ({Serial}) in new seat {Seat}", m.Name, m.Serial, row.Key);
@@ -1068,10 +1096,15 @@ public static class Seats
     public static void QuarantineForTests(Mobile m)
     {
         _active = true;
+        Revision++;
         _quarantined.Add(m);
     }
 
-    public static void ReleaseForTests(Mobile m) => _quarantined.Remove(m);
+    public static void ReleaseForTests(Mobile m)
+    {
+        Revision++;
+        _quarantined.Remove(m);
+    }
 
     public static string SerializeForTests() => NonceForSave();
 
@@ -1087,7 +1120,9 @@ public static class Seats
         OffSavePredatesRegister = false;
         _register = null;
         _exposed = false;
+        Revision++;
         _occupants.Clear();
+        Revision++;
         _quarantined.Clear();
         _deletingSpawners.Clear();
         SeatOccupants.ResetForTests();

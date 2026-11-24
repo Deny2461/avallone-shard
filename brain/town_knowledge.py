@@ -1,5 +1,5 @@
-"""Townsfolk step, Stage 2 - knowing their town (design §7). First built as a prototype for a measurement run;
-reviewed by Codex and live since November 2026.
+"""Townsfolk step, Stage 2 - knowing their town (design §7). LIVE: reviewed by Codex and in use since townsfolk Stage 2
+went live (build ab52a5b0a). (This header still said "PROTOTYPE ... not live" until the errands change corrected it.)
 
 From a roster usable for THIS turn only: for an NPC with a home, the nearest of each common place in its own town and
 on its own map - one of eight compass directions, one of three distances, measured home to home, with the keeper's
